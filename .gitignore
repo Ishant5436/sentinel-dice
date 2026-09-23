@@ -1,0 +1,26 @@
+# Node & Build artifacts
+node_modules/
+dist/
+build/
+artifacts/
+cache/
+typechain/
+typechain-types/
+
+# Environment and sensitive keys
+.env
+.env.*
+*.json.key
+*keypair*.json
+id.json
+wallet.json
+*.pem
+*.key
+
+# Hardhat & IDE
+coverage/
+coverage.json
+.vscode/
+.idea/
+*.swp
+.DS_Store

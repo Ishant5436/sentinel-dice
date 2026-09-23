@@ -1,0 +1,35 @@
+{
+  "name": "sentinel-dice",
+  "version": "1.0.0",
+  "description": "Provably fair on-chain dice battle protocol adhering to ICasinoGameV2 on Base",
+  "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@chain/casino-sdk": "link:/tmp/casino-sdk/casino-sdk",
+    "lucide-react": "^1.16.0",
+    "penpal": "^7.0.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "viem": "^2.23.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox-viem": "^3.0.0",
+    "@openzeppelin/contracts": "^5.2.0",
+    "@types/node": "^22.13.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "hardhat": "^2.22.18",
+    "postcss": "^8.5.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}
