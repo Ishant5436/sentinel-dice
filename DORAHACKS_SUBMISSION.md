@@ -69,8 +69,12 @@ The test suite runs against Hardhat and viem, validating:
 3. Zero `reservedProfitDelta` on the settling step.
 4. Deterministic rejection sampling behavior across simulated VRF entropy streams.
 
-### Test Results
+### Test Results (10/10 Tests Passing Green)
 ```
+  SentinelDice Full Host Integration Tests
+    ✔ completes full lifecycle: openSession -> verify request -> fulfill randomness -> settle
+    ✔ handles high multiplier Under 4 bet (3 ways, 11.76x) without invalid payout errors
+
   SentinelDice Protocol Tests
     Math & Combinatorics Verification
       ✔ computes exact combinatorial winning ways for all sum combinations
@@ -85,7 +89,7 @@ The test suite runs against Hardhat and viem, validating:
     Rejection Sampling Uniformity & Boundary Invariants
       ✔ ensures all simulated rolls produce valid faces in [1, 6] across 100 seeds
 
-  8 passing (484ms)
+  10 passing (504ms)
 ```
 
 ---
