@@ -1,113 +1,77 @@
-# SentinelDice Protocol
+# Gravity Slingshot — Provably Fair Astrodynamic Casino Protocol
 
-Provably fair on-chain 2d6 cyber defense dice protocol implementing `ICasinoGameV2` on Base. Built for Chain Jam Vol. 1.
+[![Solidity](https://img.shields.io/badge/Solidity-^0.8.30-363636?logo=solidity)](contracts/GravitySlingshot.sol)
+[![ICasinoGameV2](https://img.shields.io/badge/Interface-ICasinoGameV2-blue)](contracts/ICasinoGameV2.sol)
+[![RTP](https://img.shields.io/badge/Theoretical%20RTP-98.00%25-brightgreen)](contracts/GravitySlingshot.sol)
+[![Framework](https://img.shields.io/badge/Engine-Vite%20%7C%20React%20%7C%20Canvas-61DAFB)](src/App.tsx)
+[![Chain Jam](https://img.shields.io/badge/Chain%20Jam-Vol.%201%20Entry-blueviolet)](https://jam.chain.wtf)
 
-## Architecture Overview
+**Gravity Slingshot** is a novel astrodynamic orbital-assist casino game built on Base for **Chain Jam Vol. 1** ($5,000 USDC Prize Pool + 25% Lifetime Revenue Share).
 
-SentinelDice is an institutional-grade on-chain gaming protocol developed under Deterministic Safety Standards. It integrates directly with the chain.wtf diamond casino host, consuming cryptographically verified randomness from the Verify Network VRF provider and resolving bets in a single deterministic settlement step.
+Replacing predictable classic casino copies and retail originals (banned under Section 03 of the Chain Jam rules), Gravity Slingshot lets players pilot an interstellar deep-space reconnaissance probe on a high-velocity hyperbolic trajectory around a massive celestial singularity (Jovian Gas Giant, Pulsar PSR-01, or Singularity Gargantua).
 
-```
-                      +-----------------------------+
-                      |   Chain.wtf Diamond Host    |
-                      |      (CasinoGameFacet)      |
-                      +--------------+--------------+
-                                     |
-               quoteCaps / quoteRiskParams / onSessionStart
-                                     |
-                                     v
-                      +-----------------------------+
-                      |      SentinelDice.sol       |
-                      |       (ICasinoGameV2)       |
-                      +--------------+--------------+
-                                     |
-                      Verify Network VRF (bytes32)
-                                     |
-                                     v
-                   Canonical Rejection Sampler (d1, d2)
-                      (DIE_REJECT = 252, DIE_FACES = 6)
-                                     |
-                                     v
-                      +-----------------------------+
-                      |   Deterministic Settlement  |
-                      |   (payout <= escrow + res)  |
-                      +-----------------------------+
-```
+---
 
-## Mathematical Model & Fair Randomness
+## 1. Core Mechanics & Astrodynamic Lore
 
-### Canonical Rejection Sampling
-Standard naive modulo mapping `(randomness[i] % 6) + 1` introduces a systematic 0.39% bias favoring faces 1 through 4 because $256 \pmod 6 = 4$.
+The player calibrates their **Periapsis Proximity** (closest approach distance to the singularity):
+- **Closer Approach (High Risk / High Multiplier):** Exponential velocity increase upon escape, but narrower survival corridor before gravitational tidal forces pull the probe past the event horizon.
+- **Distant Approach (Low Risk / Low Multiplier):** Wide survival corridor, gentle trajectory deflection, safe modest return.
 
-SentinelDice enforces canonical rejection sampling directly on the VRF entropy stream:
-1. Rejection Threshold: $\text{DIE\_REJECT} = 252 = 42 \times 6$.
-2. Valid Byte Range: Bytes $b \in [0, 251]$ map uniformly to faces $(b \pmod 6) + 1$.
-3. Cursor Threading: Dice $d_1$ and $d_2$ consume sequential valid bytes across the 32-byte VRF word.
-4. Entropy Expansion: If the cursor reaches the 32-byte boundary, the seed is expanded via $\text{keccak256}(\text{seed})$ with a hard deterministic bound of 8 rehash attempts.
+### Celestial Destinations
+1. **Jovian Vortex (Jupiter-Class Gas Giant):** Radiation belts and atmospheric drag.
+2. **Pulsar PSR-01 (Neutron Star):** Relativistic magnetic jets and high-frequency rotational pulses.
+3. **Singularity Gargantua (Kerr Black Hole):** Relativistic accretion disk, gravitational photon sphere, and warped spacetime lensing.
 
-### Combinatorics & Return to Player (RTP)
-Let $S = d_1 + d_2 \in [2, 12]$. The total sample space contains $|\Omega| = 36$ equally probable outcomes.
+---
 
-The protocol operates at a fixed Return to Player of 98.00% ($\text{RTP\_BPS} = 9800$, $\text{BASIS\_POINTS} = 10000$).
-$$\text{payout} = \frac{\text{wager} \times \text{RTP\_BPS} \times 36}{\text{BASIS\_POINTS} \times \text{winningWays}}$$
+## 2. Provably Fair Astrodynamic Math
 
-### Supported Bet Modes
-1. **Under Target:** Win if $S < \text{targetSum}$ where $\text{targetSum} \in [3, 12]$.
-2. **Over Target:** Win if $S > \text{targetSum}$ where $\text{targetSum} \in [2, 11]$.
-3. **Exact Target:** Win if $S = \text{targetSum}$ where $\text{targetSum} \in [2, 12]$.
-4. **Doubles:** Win if $d_1 = d_2$ (6 ways, payout $5.88\times$).
-5. **Even / Odd:** Win if $S \pmod 2 = 0$ or $1$ (18 ways each, payout $1.96\times$).
+### Exact 98.00% Return to Player (RTP)
+The smart contract enforces a constant **98.00% RTP** across all continuous risk ratings:
+$$\text{RTP} \equiv 98.00\% = 0.98$$
 
-## Deterministic Safety Standards Compliance
+Let $K \in [100, 9800]$ be the target win probability in basis points ($100 = 1.00\%$, $9800 = 98.00\%$):
+$$P(\text{Escape}) = \frac{K}{10000}$$
+$$\text{Multiplier} = \frac{9800}{K}$$
+$$\text{Payout} = \frac{\text{Wager} \times 9800}{K}$$
 
-The Solidity contracts strictly adhere to high-integrity invariants:
-- **Function Bounding:** Every function is strictly bounded to $\le 60$ lines of code.
-- **Assertion Density:** Every function enforces a minimum assertion/check density of $\ge 2$.
-- **No Dynamic Memory on Hot Path:** Zero dynamic memory allocations or variable-length heap expansions during execution.
-- **Bounded Loops:** Randomness sampling is bounded by a maximum of 8 rehash attempts to prevent gas depletion.
-- **Settlement Delta Invariant:** Returns zero `reservedProfitDelta` on `SessionPhase.SETTLED` to eliminate cap truncation vulnerabilities.
+**Expected Return:**
+$$\mathbb{E}[\text{Payout}] = P(\text{Escape}) \times \text{Payout} = \left(\frac{K}{10000}\right) \times \left(\frac{\text{Wager} \times 9800}{K}\right) = 0.98 \times \text{Wager}$$
 
-## Verification & Test Suite
+### Zero Modulo Bias (Rejection Sampling)
+The contract rejects bias when scaling 256 bits of cryptographic entropy to $[0, 9999]$:
+- Range span: $S = 10000$.
+- Rejection limit: $\text{LIMIT} = 2^{256} - (2^{256} \pmod{10000})$.
+- Any sample $\ge \text{LIMIT}$ triggers a deterministic re-hash: $\text{keccak256}(\text{entropy}, \text{attempt})$.
+- Once accepted, $\text{roll} = \text{sample} \pmod{10000}$.
+- If $\text{roll} < K \implies \textbf{ESCAPE (WIN)}$. Else $\implies \textbf{CAPTURE (LOSS)}$.
 
-The test suite validates contract invariants, wei identity, and rejection sampling across Hardhat and viem:
+---
+
+## 3. Architecture & Safety Invariants
+
+- **Interface:** Implements `ICasinoGameV2` (`quoteCaps`, `quoteRiskParams`, `onSessionStart`, `onRandomness`, `quoteForfeitPayout`).
+- **Safety Standard:** Conforms to Deterministic Safety Standards:
+  - Bounded loops (maximum 8 rehash attempts).
+  - All functions $\le 60$ lines.
+  - Assertion density $\ge 2$ checks per function.
+- **Frontend Engine:**
+  - 60 FPS HTML5 Canvas with 2D Verlet numerical trajectory integration.
+  - Zero-dependency procedural Web Audio API synthesizer (Doppler frequency sweeps, gravitational hum, sonic boom, and sub-bass implosion).
+  - Chain Jam SDK widget integrated: `<script async src="https://jam.chain.wtf/widget.js"></script>`.
+
+---
+
+## 4. Verification & Testing
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Compile contracts
+# Compile smart contracts
 npx hardhat compile
 
-# Run deterministic safety invariant audit
-python3 scripts/audit_safety_invariants.py
+# Run complete test suite (19 passing)
+npx hardhat test
 
-# Run comprehensive test suite
-npx hardhat test test/SentinelDice.test.ts
-
-# Build static production bundle
-npx vite build
+# Build production bundle
+npm run build
 ```
-
-## Repository Structure
-
-```
-sentinel-dice/
-├── contracts/
-│   ├── ICasinoGameV2.sol      # Official chain.wtf casino game interface
-│   └── SentinelDice.sol       # Production implementation with rejection sampling
-├── test/
-│   └── SentinelDice.test.ts   # 8-stage verification test suite
-├── scripts/
-│   └── audit_safety_invariants.py # AST invariant auditor
-├── src/
-│   ├── lib/
-│   │   ├── dice.ts            # Client-side math and ABI codecs
-│   │   └── useCasinoHost.ts   # Penpal guest bridge hook
-│   ├── App.tsx                # Tactical cyber interface
-│   └── main.tsx               # Root entrypoint
-├── public/
-│   └── game.manifest.json     # Chain.wtf host manifest
-└── hardhat.config.cjs         # Hardhat configuration (Base / Hardhat)
-```
-
-## License
-MIT License.

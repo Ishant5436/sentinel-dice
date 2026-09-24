@@ -48,7 +48,7 @@ export function useCasinoHost(): {
     setSnapshot(latest);
 
     void connection.promise
-      .then(parent => {
+      .then((parent: any) => {
         if (mounted) setHostApi(parent);
       })
       .catch(() => {

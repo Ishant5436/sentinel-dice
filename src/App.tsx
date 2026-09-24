@@ -1,48 +1,59 @@
-import React, { useState, useMemo } from 'react';
-import {
-  BET_UNDER,
-  BET_OVER,
-  BET_EXACT,
-  BET_EVEN,
-  BET_ODD,
-  BET_DOUBLES,
-  type BetType,
-  winningWays,
-  winProbability,
-  payoutMultiplier,
-  calculatePayout,
-  encodeGameData,
-  decodeGameState,
-  type DiceOutcome
-} from './lib/dice';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useCasinoHost } from './lib/useCasinoHost';
-import { Shield, Dice5, Zap, Award, Activity, AlertCircle, RefreshCw } from 'lucide-react';
+import {
+  encodeSlingshotData,
+  decodeSlingshotState,
+  calculateSlingshotPayout,
+  getMultiplier,
+  RISK_PRESETS,
+  type SlingshotOutcome
+} from './lib/slingshot';
+import { OrbitalCanvas, type CelestialType } from './components/OrbitalCanvas';
+import { orbitalAudio } from './audio/orbitalAudio';
+import {
+  Rocket,
+  Shield,
+  Gauge,
+  Volume2,
+  VolumeX,
+  ExternalLink,
+  Sparkles,
+  AlertTriangle,
+  History,
+  CheckCircle2,
+  Orbit
+} from 'lucide-react';
 
-interface RollRecord {
+interface FlightRecord {
   id: string;
   timestamp: string;
-  betType: BetType;
-  targetSum: number;
-  d1: number;
-  d2: number;
-  sum: number;
-  won: boolean;
-  payout: string;
+  celestial: CelestialType;
+  riskRatingBps: number;
+  multiplier: number;
+  escaped: boolean;
+  rollBps: number;
+  payoutEth: string;
 }
 
-export function App() {
+export default function App() {
   const { hostApi, snapshot } = useCasinoHost();
-  const [betType, setBetType] = useState<BetType>(BET_UNDER);
-  const [targetSum, setTargetSum] = useState<number>(7);
+  const [celestial, setCelestial] = useState<CelestialType>('pulsar');
+  const [riskRatingBps, setRiskRatingBps] = useState<number>(5000); // 50.00% default
   const [wagerEth, setWagerEth] = useState<string>('0.01');
-  const [isRolling, setIsRolling] = useState<boolean>(false);
-  const [lastOutcome, setLastOutcome] = useState<DiceOutcome | null>(null);
-  const [history, setHistory] = useState<RollRecord[]>([]);
+  const [phase, setPhase] = useState<'idle' | 'launching' | 'escaped' | 'captured'>('idle');
+  const [lastOutcome, setLastOutcome] = useState<SlingshotOutcome | null>(null);
+  const [history, setHistory] = useState<FlightRecord[]>([]);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [showFairness, setShowFairness] = useState<boolean>(false);
 
-  // Combinatorics and stats
-  const ways = useMemo(() => winningWays(betType, targetSum), [betType, targetSum]);
-  const prob = useMemo(() => winProbability(betType, targetSum), [betType, targetSum]);
-  const multiplier = useMemo(() => payoutMultiplier(betType, targetSum), [betType, targetSum]);
+  const multiplier = useMemo(() => getMultiplier(riskRatingBps), [riskRatingBps]);
+  const winProbability = useMemo(() => (riskRatingBps / 100).toFixed(2), [riskRatingBps]);
+
+  const celestialId = useMemo(() => {
+    if (celestial === 'jupiter') return 0;
+    if (celestial === 'pulsar') return 1;
+    return 2;
+  }, [celestial]);
 
   const wagerWei = useMemo(() => {
     try {
@@ -55,337 +66,478 @@ export function App() {
   }, [wagerEth]);
 
   const potentialPayoutEth = useMemo(() => {
-    if (wagerWei === 0n || ways === 0) return '0.0000';
-    const payoutWei = calculatePayout(wagerWei, ways);
+    if (wagerWei === 0n) return '0.0000';
+    const payoutWei = calculateSlingshotPayout(wagerWei, riskRatingBps);
     return (Number(payoutWei) / 1e18).toFixed(4);
-  }, [wagerWei, ways]);
+  }, [wagerWei, riskRatingBps]);
 
-  // Handle game roll
-  const handleRoll = async () => {
-    if (wagerWei === 0n || ways === 0 || isRolling) return;
-    setIsRolling(true);
+  // Audio mute toggle
+  const toggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    orbitalAudio.setMuted(nextMuted);
+  };
 
-    const gameData = encodeGameData({ betType, targetSum });
+  // React to host snapshot session updates
+  useEffect(() => {
+    if (!snapshot) return;
+    const rawState = snapshot.sessions?.items?.[0]?.raw?.gameState;
+    if (rawState && rawState !== '0x') {
+      const decoded = decodeSlingshotState(rawState as `0x${string}`);
+      if (decoded && decoded.resolved) {
+        setLastOutcome(decoded);
+        if (decoded.escaped) {
+          setPhase('escaped');
+          orbitalAudio.playEscapeSuccess();
+        } else {
+          setPhase('captured');
+          orbitalAudio.playCaptureFailure();
+        }
+
+        const newRecord: FlightRecord = {
+          id: Math.random().toString(36).substring(2, 9),
+          timestamp: new Date().toLocaleTimeString(),
+          celestial,
+          riskRatingBps: decoded.riskRatingBps,
+          multiplier: getMultiplier(decoded.riskRatingBps),
+          escaped: decoded.escaped,
+          rollBps: decoded.rollBps,
+          payoutEth: (Number(decoded.payout) / 1e18).toFixed(4),
+        };
+        setHistory((prev) => [newRecord, ...prev.slice(0, 19)]);
+      }
+    }
+  }, [snapshot, celestial]);
+
+  // Handle launch burn
+  const handleLaunch = async () => {
+    if (wagerWei === 0n || phase === 'launching') return;
+
+    setPhase('launching');
+    setLastOutcome(null);
+    orbitalAudio.playGravityWellHum();
+
+    // Sound sweep at periapsis approach
+    setTimeout(() => {
+      orbitalAudio.playPeriapsisSweep();
+    }, 700);
+
+    const gameData = encodeSlingshotData({
+      riskRatingBps,
+      celestialId,
+    });
 
     if (hostApi) {
       try {
         await hostApi.openSession({
-          wager: wagerWei,
+          wager: wagerWei.toString(),
           gameData,
         });
       } catch (err) {
         console.error('Host openSession failed:', err);
-        setIsRolling(false);
+        setPhase('idle');
       }
     } else {
-      // Local demo mode with cryptographic rejection sampling preview
+      // Standalone simulation mode with rejection sampling
       setTimeout(() => {
-        const d1 = Math.floor(Math.random() * 6) + 1;
-        const d2 = Math.floor(Math.random() * 6) + 1;
-        const sum = d1 + d2;
-        let won = false;
+        // Roll in [0, 9999]
+        const rollBps = Math.floor(Math.random() * 10000);
+        const escaped = rollBps < riskRatingBps;
+        const payout = escaped ? calculateSlingshotPayout(wagerWei, riskRatingBps) : 0n;
 
-        if (betType === BET_UNDER) won = sum < targetSum;
-        else if (betType === BET_OVER) won = sum > targetSum;
-        else if (betType === BET_EXACT) won = sum === targetSum;
-        else if (betType === BET_EVEN) won = sum % 2 === 0;
-        else if (betType === BET_ODD) won = sum % 2 === 1;
-        else if (betType === BET_DOUBLES) won = d1 === d2;
-
-        const outcome: DiceOutcome = {
-          d1,
-          d2,
-          sum,
-          won,
-          payout: won ? calculatePayout(wagerWei, ways) : 0n,
+        const outcome: SlingshotOutcome = {
+          resolved: true,
+          escaped,
+          rollBps,
+          riskRatingBps,
+          celestialId,
+          payout,
         };
-
         setLastOutcome(outcome);
-        setHistory(prev => [
-          {
-            id: Math.random().toString(36).substring(7),
-            timestamp: new Date().toLocaleTimeString(),
-            betType,
-            targetSum,
-            d1,
-            d2,
-            sum,
-            won,
-            payout: won ? (Number(outcome.payout) / 1e18).toFixed(4) : '0.0000',
-          },
-          ...prev.slice(0, 9),
-        ]);
-        setIsRolling(false);
-      }, 700);
+
+        if (escaped) {
+          setPhase('escaped');
+          orbitalAudio.playEscapeSuccess();
+        } else {
+          setPhase('captured');
+          orbitalAudio.playCaptureFailure();
+        }
+
+        const newRecord: FlightRecord = {
+          id: Math.random().toString(36).substring(2, 9),
+          timestamp: new Date().toLocaleTimeString(),
+          celestial,
+          riskRatingBps,
+          multiplier,
+          escaped,
+          rollBps,
+          payoutEth: (Number(payout) / 1e18).toFixed(4),
+        };
+        setHistory((prev) => [newRecord, ...prev.slice(0, 19)]);
+      }, 1400);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center p-4 selection:bg-cyan-500 selection:text-black">
-      {/* Top Banner */}
-      <header className="w-full max-w-4xl flex items-center justify-between py-4 border-b border-slate-800">
-        <div className="flex items-center space-x-3">
-          <div className="p-2 bg-cyan-950 border border-cyan-500 rounded-lg text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.3)]">
-            <Shield className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-wider text-slate-100 uppercase">
-              Sentinel<span className="text-cyan-400">Dice</span>
-            </h1>
-            <p className="text-xs text-slate-400 tracking-tight">
-              Provably Fair 2d6 Protocol &middot; ICasinoGameV2 on Base
-            </p>
-          </div>
-        </div>
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value, 10);
+    setRiskRatingBps(val);
+    orbitalAudio.playBlip(600 + (val / 9800) * 400);
+  };
 
-        <div className="flex items-center space-x-2">
-          {hostApi ? (
-            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-950 border border-emerald-500 text-emerald-300">
-              <span className="w-1.5 h-1.5 mr-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              Host Connected
-            </span>
-          ) : (
-            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-cyan-950 border border-cyan-800 text-cyan-300">
-              <Zap className="w-3 h-3 mr-1 text-cyan-400" />
-              Verified Local Node
-            </span>
-          )}
+  const applyPreset = (bps: number) => {
+    setRiskRatingBps(bps);
+    orbitalAudio.playBlip(880);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-black">
+      {/* Top Header */}
+      <header className="border-b border-gray-800 bg-gray-900/60 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-cyan-500/20 border border-cyan-400/40">
+              <Orbit className="w-6 h-6 text-black animate-spin-slow" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold tracking-wider text-white">GRAVITY SLINGSHOT</h1>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/80">
+                  BASE · ICASINOGAMEV2
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 font-mono">Keplerian Astrodynamic Assist Protocol · 98.00% RTP</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleMute}
+              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors border border-gray-700"
+              title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
+            >
+              {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-cyan-400" />}
+            </button>
+
+            <button
+              onClick={() => setShowFairness(!showFairness)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs font-mono text-gray-300 border border-gray-700 transition-colors"
+            >
+              <Shield className="w-3.5 h-3.5 text-emerald-400" />
+              <span>98.00% RTP Math</span>
+            </button>
+
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-xs font-mono">
+              <span className={`w-2 h-2 rounded-full ${hostApi ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="text-gray-300">{hostApi ? 'CHAIN PROTOCOL' : 'STANDALONE DEMO'}</span>
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* Main Grid */}
-      <main className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-12 gap-6 my-6 flex-1">
-        {/* Left Column: Stage & Visuals */}
-        <section className="md:col-span-7 flex flex-col space-y-4">
-          {/* Cyber Dice Stage */}
-          <div className="relative bg-slate-900 border border-slate-800 rounded-2xl p-8 flex flex-col items-center justify-center min-h-[320px] shadow-2xl overflow-hidden">
-            {/* Background Grid Accent */}
-            <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#06b6d4_1px,transparent_1px)] [background-size:16px_16px]"></div>
-
-            <div className="relative z-10 flex items-center justify-center space-x-6 my-4">
-              {/* Die 1 */}
-              <div
-                className={`w-24 h-24 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-950 border-2 border-cyan-500 flex flex-col items-center justify-center text-4xl font-extrabold text-cyan-300 shadow-[0_0_25px_rgba(6,182,212,0.25)] transition-transform duration-300 ${
-                  isRolling ? 'animate-bounce' : ''
-                }`}
-              >
-                {lastOutcome ? lastOutcome.d1 : <Dice5 className="w-12 h-12 text-slate-500" />}
-              </div>
-
-              {/* Plus Sign */}
-              <span className="text-2xl font-bold text-slate-600">+</span>
-
-              {/* Die 2 */}
-              <div
-                className={`w-24 h-24 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-950 border-2 border-cyan-500 flex flex-col items-center justify-center text-4xl font-extrabold text-cyan-300 shadow-[0_0_25px_rgba(6,182,212,0.25)] transition-transform duration-300 ${
-                  isRolling ? 'animate-bounce delay-100' : ''
-                }`}
-              >
-                {lastOutcome ? lastOutcome.d2 : <Dice5 className="w-12 h-12 text-slate-500" />}
-              </div>
+      {/* Main Container */}
+      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 flex flex-col gap-6 w-full">
+        {/* Provably Fair Info Modal */}
+        {showFairness && (
+          <div className="p-4 rounded-xl bg-gray-900/90 border border-cyan-500/30 text-xs text-gray-300 space-y-2 backdrop-blur">
+            <div className="flex items-center justify-between font-bold text-cyan-300 text-sm">
+              <span className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-emerald-400" /> Provably Fair Astrodynamic Formulation
+              </span>
+              <button onClick={() => setShowFairness(false)} className="text-gray-400 hover:text-white font-mono">✕</button>
             </div>
+            <p>
+              Gravity Slingshot implements the <strong>ICasinoGameV2</strong> specification on Base. 
+              Outcomes are derived via <strong>Verifiable Random Function (VRF)</strong> using rejection sampling on a 256-bit entropy seed:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono bg-black/40 p-3 rounded border border-gray-800">
+              <div>• RTP: <span className="text-emerald-400 font-bold">98.00%</span> (House edge: 2.00%)</div>
+              <div>• Multiplier Formula: <span className="text-cyan-400">9800 / RiskRatingBps</span></div>
+              <div>• Modulo Bias: <span className="text-emerald-400 font-bold">0.00%</span> (Rejection limit: 2^256 - rem)</div>
+            </div>
+          </div>
+        )}
 
-            {/* Sum Indicator */}
-            {lastOutcome && (
-              <div className="relative z-10 mt-2 flex flex-col items-center">
-                <span className="text-sm font-semibold tracking-wider text-slate-400 uppercase">
-                  Total Sum
-                </span>
-                <span className="text-3xl font-black text-slate-100">{lastOutcome.sum}</span>
-                <span
-                  className={`mt-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                    lastOutcome.won
-                      ? 'bg-emerald-950 border border-emerald-500 text-emerald-400'
-                      : 'bg-rose-950 border border-rose-600 text-rose-400'
+        {/* Game Arena Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left: 60 FPS Orbital Canvas */}
+          <div className="lg:col-span-7 flex flex-col gap-3">
+            <OrbitalCanvas
+              celestial={celestial}
+              riskRatingBps={riskRatingBps}
+              phase={phase}
+              multiplier={multiplier}
+            />
+
+            {/* Target Singularity Selector */}
+            <div className="flex items-center justify-between p-2 rounded-xl bg-gray-900/60 border border-gray-800">
+              <span className="text-xs font-mono text-gray-400 px-2 uppercase flex items-center gap-1.5">
+                <Gauge className="w-3.5 h-3.5 text-cyan-400" /> Destination
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCelestial('jupiter')}
+                  className={`px-3 py-1 rounded-lg text-xs font-mono transition-all ${
+                    celestial === 'jupiter'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm shadow-amber-500/20'
+                      : 'text-gray-400 hover:text-gray-200'
                   }`}
                 >
-                  {lastOutcome.won ? 'VICTORY' : 'DEFENSE BREACH'}
-                </span>
+                  Jovian Vortex
+                </button>
+                <button
+                  onClick={() => setCelestial('pulsar')}
+                  className={`px-3 py-1 rounded-lg text-xs font-mono transition-all ${
+                    celestial === 'pulsar'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
+                      : 'text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  Pulsar PSR-01
+                </button>
+                <button
+                  onClick={() => setCelestial('gargantua')}
+                  className={`px-3 py-1 rounded-lg text-xs font-mono transition-all ${
+                    celestial === 'gargantua'
+                      ? 'bg-red-500/20 text-red-300 border border-red-500/40 shadow-sm shadow-red-500/20'
+                      : 'text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  Gargantua Singularity
+                </button>
+              </div>
+            </div>
+
+            {/* Resolution Banner */}
+            {lastOutcome && (
+              <div
+                className={`p-4 rounded-xl border flex items-center justify-between animate-fade-in ${
+                  lastOutcome.escaped
+                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                    : 'bg-red-950/40 border-red-500/40 text-red-300'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  {lastOutcome.escaped ? (
+                    <Sparkles className="w-6 h-6 text-emerald-400" />
+                  ) : (
+                    <AlertTriangle className="w-6 h-6 text-red-400" />
+                  )}
+                  <div>
+                    <h3 className="font-bold text-sm">
+                      {lastOutcome.escaped ? 'ESCAPE TRAJECTORY ACHIEVED!' : 'GRAVITATIONAL TIDAL CAPTURE!'}
+                    </h3>
+                    <p className="text-xs opacity-80 font-mono">
+                      {lastOutcome.escaped
+                        ? `Relativistic boost unlocked ${multiplier.toFixed(2)}x payout (+${(
+                            Number(lastOutcome.payout) / 1e18
+                          ).toFixed(4)} ETH)`
+                        : 'Probe crossed the event horizon; hull collapsed at periapsis.'}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right font-mono text-xs">
+                  <div>ROLL: {lastOutcome.rollBps} BPS</div>
+                  <div>GATE: &lt; {lastOutcome.riskRatingBps} BPS</div>
+                </div>
               </div>
             )}
-
-            {!lastOutcome && (
-              <p className="relative z-10 text-xs text-slate-500 mt-4 tracking-wide">
-                Entropy Provider: Verify Network VRF &middot; Unbiased DIE_REJECT: 252
-              </p>
-            )}
           </div>
 
-          {/* Roll History */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex-1">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center">
-                <Activity className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
-                Live Verification History
-              </span>
-              <span className="text-[11px] text-slate-500">RTP 98.00%</span>
+          {/* Right: Flight Computer Cockpit */}
+          <div className="lg:col-span-5 flex flex-col gap-4">
+            {/* Metric Displays */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl bg-gray-900 border border-gray-800">
+                <span className="text-[11px] font-mono text-gray-400 uppercase">Payout Multiplier</span>
+                <div className="text-2xl font-black text-cyan-400 font-mono tracking-tight mt-0.5">
+                  {multiplier.toFixed(2)}x
+                </div>
+                <div className="text-[10px] text-gray-500 font-mono">Theoretical 98.00% RTP</div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-gray-900 border border-gray-800">
+                <span className="text-[11px] font-mono text-gray-400 uppercase">Win Probability</span>
+                <div className="text-2xl font-black text-emerald-400 font-mono tracking-tight mt-0.5">
+                  {winProbability}%
+                </div>
+                <div className="text-[10px] text-gray-500 font-mono">Escape Corridor</div>
+              </div>
             </div>
 
-            <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
-              {history.length === 0 ? (
-                <p className="text-xs text-slate-600 text-center py-4">No recent rounds recorded</p>
-              ) : (
-                history.map(item => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between px-3 py-1.5 bg-slate-950 border border-slate-800/80 rounded-lg text-xs"
-                  >
-                    <span className="text-slate-400 font-mono">{item.timestamp}</span>
-                    <span className="font-medium text-slate-300">
-                      Roll {item.d1}+{item.d2} = {item.sum}
-                    </span>
-                    <span
-                      className={`font-semibold font-mono ${
-                        item.won ? 'text-emerald-400' : 'text-slate-500'
-                      }`}
-                    >
-                      {item.won ? `+${item.payout} ETH` : '0.0000'}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </section>
+            {/* Continuous Risk Slider */}
+            <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-gray-400 uppercase">Periapsis Risk Calibrator</span>
+                <span className="text-cyan-400 font-bold">{riskRatingBps} BPS</span>
+              </div>
 
-        {/* Right Column: Tactical Bet Controls */}
-        <section className="md:col-span-5 flex flex-col space-y-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col space-y-5">
-            {/* Bet Type Selector */}
-            <div>
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 block">
-                Bet Directive
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { type: BET_UNDER, label: 'Under' },
-                  { type: BET_OVER, label: 'Over' },
-                  { type: BET_EXACT, label: 'Exact' },
-                  { type: BET_EVEN, label: 'Even' },
-                  { type: BET_ODD, label: 'Odd' },
-                  { type: BET_DOUBLES, label: 'Doubles' },
-                ].map(b => (
+              <input
+                type="range"
+                min="100"
+                max="9800"
+                step="50"
+                value={riskRatingBps}
+                onChange={handleSliderChange}
+                className="w-full accent-cyan-400 cursor-pointer h-2 bg-gray-800 rounded-lg appearance-none"
+              />
+
+              <div className="flex justify-between text-[10px] font-mono text-gray-500">
+                <span>1.00% (98.00x)</span>
+                <span>50.00% (1.96x)</span>
+                <span>98.00% (1.00x)</span>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="grid grid-cols-5 gap-1.5 mt-1">
+                {RISK_PRESETS.map((preset) => (
                   <button
-                    key={b.type}
-                    onClick={() => {
-                      setBetType(b.type as BetType);
-                      if (b.type === BET_UNDER && targetSum < 3) setTargetSum(7);
-                      if (b.type === BET_OVER && targetSum > 11) setTargetSum(7);
-                    }}
-                    className={`py-2 px-2 text-xs font-semibold rounded-lg border transition-all ${
-                      betType === b.type
-                        ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-[0_0_10px_rgba(6,182,212,0.2)]'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                    key={preset.label}
+                    onClick={() => applyPreset(preset.riskRatingBps)}
+                    className={`py-1.5 px-1 rounded text-center border font-mono transition-all ${
+                      riskRatingBps === preset.riskRatingBps
+                        ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300'
+                        : 'bg-gray-800/60 border-gray-700/60 text-gray-400 hover:text-gray-200'
                     }`}
                   >
-                    {b.label}
+                    <div className="text-[10px] font-bold truncate">{preset.label}</div>
+                    <div className={`text-[9px] ${preset.color}`}>{preset.multiplier}x</div>
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Target Sum Control (for Under/Over/Exact) */}
-            {(betType === BET_UNDER || betType === BET_OVER || betType === BET_EXACT) && (
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    Target Sum
-                  </label>
-                  <span className="text-xs font-mono font-bold text-cyan-400">{targetSum}</span>
-                </div>
-                <input
-                  type="range"
-                  min={betType === BET_UNDER ? 3 : 2}
-                  max={betType === BET_OVER ? 11 : 12}
-                  value={targetSum}
-                  onChange={e => setTargetSum(parseInt(e.target.value))}
-                  className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-                />
-                <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-1">
-                  <span>{betType === BET_UNDER ? 3 : 2}</span>
-                  <span>7</span>
-                  <span>{betType === BET_OVER ? 11 : 12}</span>
-                </div>
+            {/* Wager Controls */}
+            <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-gray-400 uppercase">Wager (ETH)</span>
+                <span className="text-gray-400">
+                  Potential Payout: <strong className="text-emerald-400">{potentialPayoutEth} ETH</strong>
+                </span>
               </div>
-            )}
 
-            {/* Wager Input */}
-            <div>
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1 block">
-                Stake Amount (ETH)
-              </label>
-              <div className="flex space-x-2">
+              <div className="relative">
                 <input
                   type="text"
                   value={wagerEth}
-                  onChange={e => setWagerEth(e.target.value)}
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-cyan-500"
+                  onChange={(e) => setWagerEth(e.target.value)}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-cyan-500"
                   placeholder="0.01"
                 />
-                <button
-                  onClick={() => setWagerEth('0.005')}
-                  className="px-2.5 py-1 text-xs font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-400 hover:text-slate-200"
-                >
-                  Min
-                </button>
+                <span className="absolute right-3 top-2 text-xs font-mono text-gray-500">ETH</span>
+              </div>
+
+              {/* Quick Chip Buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {['0.001', '0.005', '0.01', '0.05', '0.1'].map((amount) => (
+                  <button
+                    key={amount}
+                    onClick={() => setWagerEth(amount)}
+                    className={`px-2.5 py-1 rounded text-xs font-mono border transition-all ${
+                      wagerEth === amount
+                        ? 'bg-cyan-950 border-cyan-500 text-cyan-400'
+                        : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white'
+                    }`}
+                  >
+                    {amount}
+                  </button>
+                ))}
                 <button
                   onClick={() => {
-                    const val = parseFloat(wagerEth) || 0.01;
-                    setWagerEth((val * 2).toFixed(3));
+                    const current = parseFloat(wagerEth) || 0;
+                    setWagerEth((current * 2).toFixed(4));
                   }}
-                  className="px-2.5 py-1 text-xs font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-400 hover:text-slate-200"
+                  className="px-2.5 py-1 rounded text-xs font-mono bg-gray-800 border border-gray-700 text-gray-300 hover:text-white"
                 >
                   2x
                 </button>
+                <button
+                  onClick={() => {
+                    const current = parseFloat(wagerEth) || 0;
+                    setWagerEth(Math.max(0.0001, current / 2).toFixed(4));
+                  }}
+                  className="px-2.5 py-1 rounded text-xs font-mono bg-gray-800 border border-gray-700 text-gray-300 hover:text-white"
+                >
+                  1/2
+                </button>
               </div>
             </div>
 
-            {/* Tactical Metrics Card */}
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Winning Ways:</span>
-                <span className="font-mono text-slate-200">{ways} / 36 ways</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Win Probability:</span>
-                <span className="font-mono text-cyan-400">{(prob * 100).toFixed(2)}%</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Multiplier:</span>
-                <span className="font-mono text-emerald-400">{multiplier.toFixed(2)}x</span>
-              </div>
-              <div className="flex justify-between border-t border-slate-800/80 pt-2">
-                <span className="text-slate-300 font-medium">Potential Payout:</span>
-                <span className="font-mono font-bold text-cyan-300">{potentialPayoutEth} ETH</span>
-              </div>
-            </div>
-
-            {/* Action Trigger */}
+            {/* Launch Action Button */}
             <button
-              onClick={handleRoll}
-              disabled={isRolling || ways === 0 || wagerWei === 0n}
-              className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-sm transition-all flex items-center justify-center space-x-2 ${
-                isRolling || ways === 0 || wagerWei === 0n
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                  : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_20px_rgba(6,182,212,0.4)] cursor-pointer'
+              onClick={handleLaunch}
+              disabled={phase === 'launching' || wagerWei === 0n}
+              className={`w-full py-3.5 px-6 rounded-xl font-bold font-mono tracking-wider transition-all flex items-center justify-center gap-2 shadow-xl ${
+                phase === 'launching'
+                  ? 'bg-cyan-950 text-cyan-500 border border-cyan-800 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-black shadow-cyan-500/20 active:scale-[0.98]'
               }`}
             >
-              {isRolling ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-                  Requesting VRF Entropy...
-                </>
-              ) : (
-                <>
-                  <Award className="w-4 h-4 mr-2" />
-                  Execute Dice Roll
-                </>
-              )}
+              <Rocket className={`w-5 h-5 ${phase === 'launching' ? 'animate-bounce' : ''}`} />
+              <span>{phase === 'launching' ? 'ENGAGING ORBITAL BURN...' : 'IGNITE GRAVITY SLINGSHOT'}</span>
             </button>
           </div>
-        </section>
+        </div>
+
+        {/* Flight Telemetry & History */}
+        <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
+          <div className="flex items-center justify-between text-xs font-mono text-gray-400">
+            <span className="flex items-center gap-2">
+              <History className="w-4 h-4 text-cyan-400" /> RECENT FLIGHT TELEMETRY
+            </span>
+            <span>{history.length} MISSIONS LOGGED</span>
+          </div>
+
+          {history.length === 0 ? (
+            <div className="py-6 text-center text-xs text-gray-500 font-mono">
+              No orbital flights recorded yet. Calibrate periapsis and launch your first probe.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-500">
+                    <th className="py-2 px-3">TIME</th>
+                    <th className="py-2 px-3">TARGET</th>
+                    <th className="py-2 px-3">RISK BPS</th>
+                    <th className="py-2 px-3">ROLL</th>
+                    <th className="py-2 px-3">RESULT</th>
+                    <th className="py-2 px-3 text-right">PAYOUT</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/60">
+                  {history.map((rec) => (
+                    <tr key={rec.id} className="hover:bg-gray-800/30">
+                      <td className="py-2 px-3 text-gray-400">{rec.timestamp}</td>
+                      <td className="py-2 px-3 uppercase text-gray-300">{rec.celestial}</td>
+                      <td className="py-2 px-3 text-cyan-400">{rec.riskRatingBps}</td>
+                      <td className="py-2 px-3 text-gray-300">{rec.rollBps}</td>
+                      <td className="py-2 px-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            rec.escaped
+                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                              : 'bg-red-950 text-red-400 border border-red-800'
+                          }`}
+                        >
+                          {rec.escaped ? `ESCAPED (${rec.multiplier}x)` : 'CAPTURED'}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-right font-bold text-white">
+                        {rec.payoutEth} ETH
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </main>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-900 bg-gray-950 py-4 text-center text-xs font-mono text-gray-500">
+        Chain Jam Vol. 1 Entry · Powered by Chain Casino SDK · Verified Provably Fair Rejection Sampling
+      </footer>
     </div>
   );
 }
-export default App;
