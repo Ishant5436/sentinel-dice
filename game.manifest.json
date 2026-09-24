@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "gameId": "SentinelDice",
+  "gameId": "GravitySlingshot",
   "apiVersion": 1,
   "defaultLocale": "en",
   "locales": {
     "en": {
-      "name": "SentinelDice",
-      "description": "Provably fair on-chain 2d6 cyber defense dice game with canonical unbiased rejection sampling."
+      "name": "Gravity Slingshot",
+      "description": "Novel astrodynamic orbital mechanics casino game on Base. Execute gravitational assists around cosmic singularities with 98.00% provably fair RTP."
     }
   },
   "presentation": {
