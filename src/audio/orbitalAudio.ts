@@ -18,7 +18,9 @@ class OrbitalAudioEngine {
       }
     }
     if (this.ctx && this.ctx.state === "suspended") {
-      this.ctx.resume().catch(() => {});
+      this.ctx.resume().catch((err: unknown) => {
+        console.warn("AudioContext resume deferred:", err);
+      });
     }
     return this.ctx;
   }
@@ -53,8 +55,8 @@ class OrbitalAudioEngine {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.06);
-    } catch {
-      // Audio context unavailable or blocked by autoplay
+    } catch (err: unknown) {
+      console.warn("Audio synthesis bypassed:", err);
     }
   }
 
@@ -82,8 +84,8 @@ class OrbitalAudioEngine {
 
       osc.start();
       osc.stop(ctx.currentTime + 1.5);
-    } catch {
-      // Audio context unavailable
+    } catch (err: unknown) {
+      console.warn("Gravity well audio bypassed:", err);
     }
   }
 
@@ -110,8 +112,8 @@ class OrbitalAudioEngine {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.95);
-    } catch {
-      // Audio context unavailable
+    } catch (err: unknown) {
+      console.warn("Periapsis sweep audio bypassed:", err);
     }
   }
 
@@ -140,8 +142,8 @@ class OrbitalAudioEngine {
         osc.start(ctx.currentTime + idx * 0.04);
         osc.stop(ctx.currentTime + 0.8 + idx * 0.05);
       });
-    } catch {
-      // Audio context unavailable
+    } catch (err: unknown) {
+      console.warn("Escape audio bypassed:", err);
     }
   }
 
@@ -168,8 +170,8 @@ class OrbitalAudioEngine {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.75);
-    } catch {
-      // Audio context unavailable
+    } catch (err: unknown) {
+      console.warn("Capture audio bypassed:", err);
     }
   }
 }

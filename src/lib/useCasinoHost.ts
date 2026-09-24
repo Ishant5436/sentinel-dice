@@ -51,8 +51,8 @@ export function useCasinoHost(): {
       .then((parent: any) => {
         if (mounted) setHostApi(parent);
       })
-      .catch(() => {
-        // Standalone browser preview mode
+      .catch((err: unknown) => {
+        console.info('Standalone browser preview mode active:', err);
       });
 
     return () => {

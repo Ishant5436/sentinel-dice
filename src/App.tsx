@@ -60,7 +60,8 @@ export default function App() {
       const parsed = parseFloat(wagerEth);
       if (isNaN(parsed) || parsed <= 0) return 0n;
       return BigInt(Math.floor(parsed * 1e18));
-    } catch {
+    } catch (err: unknown) {
+      console.warn('Wager parsing failed:', err);
       return 0n;
     }
   }, [wagerEth]);
