@@ -1,54 +1,52 @@
-# DoraHacks BUIDL Submission: SentinelDice Protocol
+# DoraHacks BUIDL Submission: Gravity Slingshot Protocol
 
 ## Basic Information
-- **Project Name:** SentinelDice Protocol
-- **Tagline:** Provably Fair 2d6 Cyber Defense Dice Protocol on Base (`ICasinoGameV2`)
-- **Hackathon:** Chain Jam Vol. 1 ($1,000 USDC + 25% Revenue Share)
+- **Project Name:** Gravity Slingshot Protocol
+- **Tagline:** Provably Fair Astrodynamic Orbital Mechanics Casino Protocol on Base (`ICasinoGameV2`)
+- **Hackathon:** Chain Jam Vol. 1 ($1,000 USDC + 25% Lifetime Revenue Share)
 - **Ecosystem:** Base Network / EVM / Chain.wtf
 - **Repository:** https://github.com/Ishant5436/sentinel-dice
+- **Live Deployment:** https://ishant5436.github.io/sentinel-dice/
 - **License:** MIT License
 
 ---
 
 ## Executive Summary
-SentinelDice is an on-chain 2d6 game protocol built specifically for Chain Jam Vol. 1 adhering to the official chain.wtf `ICasinoGameV2` standard. 
 
-Unlike standard implementations that suffer from modulo bias when mapping raw byte streams to 6-sided dice, SentinelDice enforces canonical rejection sampling directly on Verify Network VRF randomness (`DIE_REJECT = 252`, `DIE_FACES = 6`) to guarantee uniform probability distributions across all outcomes. The protocol operates at a mathematically proven 98.00% Return to Player (RTP) with closed-form combinatorial pricing across 6 tactical bet modes: Under, Over, Exact Sum, Doubles, Even, and Odd.
+Gravity Slingshot is a novel astrodynamic orbital mechanics casino protocol built on Base specifically for Chain Jam Vol. 1 adhering to the official chain.wtf `ICasinoGameV2` standard.
+
+Replacing predictable classic casino copies and retail originals (banned under Section 03 of the Chain Jam rules), Gravity Slingshot lets players pilot an interstellar deep-space reconnaissance probe on a high-velocity hyperbolic trajectory around a massive celestial singularity (Jovian Gas Giant, Pulsar PSR-01, or Singularity Gargantua).
+
+The player calibrates their **Periapsis Proximity** (closest approach distance to the singularity):
+- **Closer Approach (High Risk / High Multiplier):** Exponential velocity increase upon escape, but narrower survival corridor before gravitational tidal forces pull the probe past the event horizon.
+- **Distant Approach (Low Risk / Low Multiplier):** Wide survival corridor, gentle trajectory deflection, safe modest return.
+
+The protocol operates at a mathematically proven **98.00% Return to Player (RTP)** with closed-form pricing across continuous risk ratings from 1.00% to 98.00% win probability ($1.00\times$ to $98.00\times$ multiplier).
 
 ---
 
 ## Technical Architecture
 
-### 1. ICasinoGameV2 Contract Compliance
-SentinelDice implements all required lifecycle methods defined by the chain.wtf diamond host:
+### 1. ICasinoGameV2 Contract Compliance (`contracts/GravitySlingshot.sol`)
+Gravity Slingshot implements all required lifecycle methods defined by the chain.wtf diamond host:
 - `quoteCaps(wager, gameData)`: Calculates exact escrow requirements and maximum reserved profit for vault liquidity checks.
 - `quoteRiskParams(wager, gameData)`: Computes maximum payout, probability in WAD, expected payout, and body variance for portfolio Value-at-Risk (VaR) accounting.
 - `onSessionStart(ctx)`: Requests VRF entropy from the host and commits reserved profit.
-- `onRandomness(ctx, randomness)`: Maps 256-bit entropy to unbiased 2d6 faces, evaluates win conditions, and returns deterministic settlement with zero `reservedProfitDelta` (preventing payout cap truncation).
+- `onRandomness(ctx, randomness)`: Evaluates escape trajectories via unbiased rejection sampling and returns deterministic settlement with zero `reservedProfitDelta`.
 - `quoteForfeitPayout(ctx)`: Returns zero to eliminate adverse-selection exploits against the vault on atomic games.
 
-### 2. Canonical Rejection Sampling & Bias Elimination
-Mapping uniform bytes ($[0, 255]$) directly to dice faces ($1..6$) via naive modulo creates an asymmetric bias because $256 \pmod 6 = 4$, making faces 1 to 4 ~0.39 percentage points more likely than faces 5 and 6.
+### 2. Zero Modulo Bias via Rejection Sampling
+Mapping raw 256-bit entropy directly to continuous basis points ($[0, 9999]$) via naive modulo creates asymmetric bias because $2^{256} \pmod{10000} \neq 0$.
 
-SentinelDice implements canonical rejection sampling:
+Gravity Slingshot enforces canonical rejection sampling:
 ```solidity
-uint8 internal constant DIE_FACES = 6;
-uint8 internal constant DIE_REJECT = 252; // 42 * 6
-
-// Rejection sampling loop
-while (attempts < MAX_REHASH_ATTEMPTS) {
-  if (nextIdx < 32) {
-    uint8 b = uint8(nextSeed[nextIdx]);
-    nextIdx++;
-    if (b < DIE_REJECT) {
-      die = (b % DIE_FACES) + 1;
-      return (die, nextIdx, nextSeed);
-    }
-    continue;
+uint256 limit = type(uint256).max - (type(uint256).max % BASIS_POINTS);
+for (uint256 attempt = 0; attempt < MAX_REHASH_ATTEMPTS; attempt++) {
+  if (sample < limit) {
+    rollBps = uint16(sample % BASIS_POINTS);
+    return rollBps;
   }
-  nextSeed = keccak256(abi.encodePacked(nextSeed));
-  nextIdx = 0;
-  attempts++;
+  sample = uint256(keccak256(abi.encodePacked(seed, attempt)));
 }
 ```
 
@@ -58,44 +56,9 @@ The contract adheres to mission-critical engineering invariants:
 - **Assertion Density:** Every function enforces a minimum assertion/check density of $\ge 2$.
 - **Zero Dynamic Memory on Hot Path:** Zero dynamic allocations during session execution.
 - **Bounded Loops:** Sampling bounded to a maximum of 8 rehash attempts.
+- **Static Invariant Audit:** Verified by automated AST script (`scripts/audit_safety_invariants.py`).
 
----
-
-## Verification & Quality Assurance Evidence
-
-The test suite runs against Hardhat and viem, validating:
-1. Combinatorial accuracy across all 36 combinations of 2d6 sums.
-2. Exact 1-wei identity between `quoteCaps`, `quoteRiskParams`, and `onRandomness` settlement payouts.
-3. Zero `reservedProfitDelta` on the settling step.
-4. Deterministic rejection sampling behavior across simulated VRF entropy streams.
-
-### Test Results (10/10 Tests Passing Green)
-```
-  SentinelDice Full Host Integration Tests
-    ✔ completes full lifecycle: openSession -> verify request -> fulfill randomness -> settle
-    ✔ handles high multiplier Under 4 bet (3 ways, 11.76x) without invalid payout errors
-
-  SentinelDice Protocol Tests
-    Math & Combinatorics Verification
-      ✔ computes exact combinatorial winning ways for all sum combinations
-      ✔ reverts on out-of-bounds targetSum for bet types
-    quoteCaps & quoteRiskParams Exact Wei Agreement
-      ✔ guarantees 1-wei identity between quoteCaps maxPayout and expected payout
-    Session Lifecycle Verification
-      ✔ returns correct StepResult on onSessionStart
-      ✔ verifies onRandomness settles with zero reservedProfitDelta and exact payout
-      ✔ verifies quoteForfeitPayout returns 0
-      ✔ rejects onPlayerAction as game resolves atomically on randomness
-    Rejection Sampling Uniformity & Boundary Invariants
-      ✔ ensures all simulated rolls produce valid faces in [1, 6] across 100 seeds
-
-  10 passing (504ms)
-```
-
----
-
-## Web Interface & Diamond Host Penpal Bridge
-The frontend is built using React 19, Vite, and Tailwind CSS. It communicates with the chain.wtf Diamond Host through an iframe Penpal RPC handshake (`@chain/casino-sdk/guest`), supporting:
-- Full responsive iframe scaling via `observeGameContentSize`.
-- Dynamic combinatorics calculation: displays live win probability, payout multiplier, and potential returns as sliders adjust.
-- Verified local preview mode for stand-alone testing.
+### 4. 60 FPS Canvas Physics & Procedural Web Audio Engine
+- **HTML5 Canvas:** Real-time 2D Verlet numerical trajectory integration, particle ion thruster plumes, relativistic magnetic beam jets, and black hole gravitational photon rings.
+- **Web Audio API:** Zero external audio assets; procedurally synthesizes relativistic Doppler sweeps (160 Hz $\to$ 720 Hz), gravity well hums (55 Hz), escape harmonic chords, and sub-bass singularity implosions.
+- **Tracking Widget:** Preserves official Chain Jam script `<script async src="https://jam.chain.wtf/widget.js"></script>`.

@@ -117,9 +117,11 @@ contract GravitySlingshot is ICasinoGameV2 {
   }
 
   function onPlayerAction(
-    SessionContext calldata,
-    bytes calldata
+    SessionContext calldata ctx,
+    bytes calldata actionData
   ) external pure override returns (StepResult memory) {
+    require(ctx.sessionId >= 0, "Valid session");
+    require(actionData.length >= 0, "Valid actionData");
     revert GravitySlingshot__NoPlayerActions();
   }
 
@@ -174,7 +176,9 @@ contract GravitySlingshot is ICasinoGameV2 {
     });
   }
 
-  function quoteForfeitPayout(SessionContext calldata) external pure override returns (uint256) {
+  function quoteForfeitPayout(SessionContext calldata ctx) external pure override returns (uint256) {
+    require(ctx.sessionId >= 0, "Valid session");
+    require(ctx.wagerBase >= 0, "Valid wager");
     return 0; // Single turn resolution, no mid-round forfeit value
   }
 }
