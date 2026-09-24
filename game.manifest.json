@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "gameId": "SentinelDice",
+  "apiVersion": 1,
+  "defaultLocale": "en",
+  "locales": {
+    "en": {
+      "name": "SentinelDice",
+      "description": "Provably fair on-chain 2d6 cyber defense dice game with canonical unbiased rejection sampling."
+    }
+  },
+  "presentation": {
+    "mode": "full-iframe",
+    "hostPanels": {
+      "openSession": false,
+      "history": false,
+      "status": false
+    }
+  },
+  "capabilities": {
+    "openSession": true,
+    "submitAction": false,
+    "forfeitExpiredSession": false,
+    "cancelStuckRandomness": false,
+    "resize": true
+  }
+}
