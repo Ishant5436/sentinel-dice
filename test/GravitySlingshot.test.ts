@@ -1,261 +1,285 @@
 import { expect } from "chai";
 import hre from "hardhat";
-import { encodeAbiParameters, decodeAbiParameters, parseAbiParameters } from "viem";
+import { decodeAbiParameters, encodeAbiParameters, parseAbiParameters, type Hex } from "viem";
 
-describe("GravitySlingshot Protocol (ICasinoGameV2)", () => {
-  let slingshot: any;
+// Grand Tour: up to four gravity assists, fresh VRF per leg, eject between legs.
+describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
+  let game: any;
 
-  const SessionPhase = {
-    NONE: 0,
-    WAITING_RANDOMNESS: 1,
-    WAITING_PLAYER_ACTION: 2,
-    SETTLED: 3,
-    FORFEITED: 4,
-    CANCELLED: 5,
-  };
+  const Phase = { WAITING_RANDOMNESS: 1, WAITING_PLAYER_ACTION: 2, SETTLED: 3 };
+  const Status = { CRUISING: 0, BURNING: 1, CAPTURED: 2, EJECTED: 3, COMPLETE: 4 };
+  const MOON = 0;
+  const JUPITER = 1;
+  const PULSAR = 2;
+  const BODIES = [MOON, JUPITER, PULSAR];
+  const SURVIVE_BPS = [8000n, 5000n, 2500n];
+  const MULT = [
+    [5n, 4n],
+    [2n, 1n],
+    [4n, 1n],
+  ];
+  const LAUNCH = 1;
+  const EJECT = 2;
+  const WAGER = 10n ** 18n; // divisible by 4^4 * 100, so every payout is exact
+
+  const TOUR_ABI = parseAbiParameters(
+    "uint8 status, uint8 legs, uint8[4] route, uint16[4] rolls, uint256 payout"
+  );
 
   before(async () => {
-    slingshot = await hre.viem.deployContract("GravitySlingshot");
+    game = await hre.viem.deployContract("GravitySlingshot");
   });
 
-  function encodeSlingshotData(riskRatingBps: number, celestialId: number = 0) {
-    return encodeAbiParameters(
-      parseAbiParameters("uint16 riskRatingBps, uint8 celestialId"),
-      [riskRatingBps, celestialId]
-    );
+  const gameData = (firstBody: number): Hex =>
+    encodeAbiParameters(parseAbiParameters("uint8 firstBody"), [firstBody]);
+
+  const action = (kind: number, body = 0): Hex =>
+    encodeAbiParameters(parseAbiParameters("uint8 action, uint8 body"), [kind, body]);
+
+  // Seeds below the rejection limit map straight to roll = seed % 10000.
+  const seedForRoll = (roll: number): Hex => `0x${roll.toString(16).padStart(64, "0")}`;
+  const SURVIVE = seedForRoll(0);
+  const CAPTURE = seedForRoll(9999);
+
+  function decodeTour(state: Hex) {
+    const [status, legs, route, rolls, payout] = decodeAbiParameters(TOUR_ABI, state);
+    return { status, legs, route: [...route], rolls: [...rolls], payout };
   }
 
-  describe("Deployment & Configuration", () => {
-    it("should deploy and configure constants correctly with 98.00% RTP", async () => {
-      const rtpBps = await slingshot.read.RTP_BPS();
-      const minRisk = await slingshot.read.MIN_RISK_BPS();
-      const maxRisk = await slingshot.read.MAX_RISK_BPS();
+  function ctxFor(firstBody: number, gameState: Hex = "0x", reservedProfit = 0n) {
+    return {
+      sessionId: 7n,
+      player: "0x1111111111111111111111111111111111111111" as Hex,
+      vault: "0x2222222222222222222222222222222222222222" as Hex,
+      wagerBase: WAGER,
+      escrowedStake: WAGER,
+      reservedProfit,
+      step: 0,
+      gameData: gameData(firstBody),
+      gameState,
+    };
+  }
 
-      expect(rtpBps).to.equal(9800n);
-      expect(minRisk).to.equal(100);
-      expect(maxRisk).to.equal(9800);
-    });
-  });
+  async function expectRevert(promise: Promise<unknown>, reason: string) {
+    try {
+      await promise;
+      expect.fail(`expected revert: ${reason}`);
+    } catch (err: any) {
+      expect(err.message).to.include(reason);
+    }
+  }
 
-  describe("quoteCaps & quoteRiskParams", () => {
-    it("should calculate accurate maxCaps for various risk ratings", async () => {
-      const wager = 1000000000000000000n; // 1 ETH (1e18)
+  // Exact rational multiplier of a route, and the payout the contract must produce.
+  function routeFraction(route: number[]) {
+    return route.reduce(
+      (acc, body) => [acc[0] * MULT[body][0], acc[1] * MULT[body][1]],
+      [1n, 1n]
+    );
+  }
+  const expectedPayout = (route: number[]) => {
+    const [num, den] = routeFraction(route);
+    return (WAGER * num * 9800n) / (den * 10000n);
+  };
 
-      // 50% Win Chance (5000 bps) -> Multiplier 9800 / 5000 = 1.96x
-      // Gross Payout = 1.96 ETH, Profit = 0.96 ETH
-      const gameData50 = encodeSlingshotData(5000, 0);
-      const [escrow50, profit50] = await slingshot.read.quoteCaps([wager, gameData50]);
-      expect(escrow50).to.equal(wager);
-      expect(profit50).to.equal(960000000000000000n); // 0.96 ETH
+  // Every legal route: any first body, then never the same body twice in a row.
+  function allRoutes(maxLegs = 4): number[][] {
+    const out: number[][] = [];
+    const grow = (route: number[]) => {
+      out.push(route);
+      if (route.length === maxLegs) return;
+      for (const body of BODIES) if (body !== route[route.length - 1]) grow([...route, body]);
+    };
+    for (const body of BODIES) grow([body]);
+    return out;
+  }
 
-      // 10% Win Chance (1000 bps) -> Multiplier 9800 / 1000 = 9.8x
-      // Gross Payout = 9.8 ETH, Profit = 8.8 ETH
-      const gameData10 = encodeSlingshotData(1000, 1);
-      const [escrow10, profit10] = await slingshot.read.quoteCaps([wager, gameData10]);
-      expect(escrow10).to.equal(wager);
-      expect(profit10).to.equal(8800000000000000000n); // 8.8 ETH
-
-      // 2% Win Chance (200 bps) -> Multiplier 9800 / 200 = 49.0x
-      // Gross Payout = 49 ETH, Profit = 48 ETH
-      const gameData2 = encodeSlingshotData(200, 2);
-      const [escrow2, profit2] = await slingshot.read.quoteCaps([wager, gameData2]);
-      expect(escrow2).to.equal(wager);
-      expect(profit2).to.equal(48000000000000000000n); // 48 ETH
-    });
-
-    it("should quote portfolio risk parameters with exact 98.00% expected payout", async () => {
-      const wager = 1000000000000000000n; // 1 ETH
-
-      const testRatings = [100, 500, 1000, 2500, 5000, 8000, 9800];
-      for (const rating of testRatings) {
-        const gameData = encodeSlingshotData(rating, 0);
-        const [maxPayout, probWad, expectedPayout, bodyVar] = await slingshot.read.quoteRiskParams([
-          wager,
-          gameData
+  // Drive the real handlers: open, survive every leg, then eject (or auto-complete).
+  async function flyAndBank(route: number[]) {
+    const start = await game.read.onSessionStart([ctxFor(route[0])]);
+    const reserve = BigInt(start.reservedProfitDelta);
+    let state: Hex = start.newGameState;
+    for (let leg = 0; leg < route.length; leg++) {
+      if (leg > 0) {
+        const launched = await game.read.onPlayerAction([
+          ctxFor(route[0], state, reserve),
+          action(LAUNCH, route[leg]),
         ]);
+        expect(launched.nextPhase).to.equal(Phase.WAITING_RANDOMNESS);
+        expect(launched.requestRandomnessNow).to.equal(true);
+        state = launched.newGameState;
+      }
+      const resolved = await game.read.onRandomness([ctxFor(route[0], state, reserve), SURVIVE]);
+      if (leg === 3) return { settle: resolved, reserve };
+      expect(resolved.nextPhase).to.equal(Phase.WAITING_PLAYER_ACTION);
+      state = resolved.newGameState;
+    }
+    const cashout = await game.read.quoteForfeitPayout([ctxFor(route[0], state, reserve)]);
+    const settle = await game.read.onPlayerAction([
+      ctxFor(route[0], state, reserve),
+      action(EJECT),
+    ]);
+    expect(cashout).to.equal(settle.payout);
+    return { settle, reserve };
+  }
 
-        // Expected payout MUST ALWAYS equal 0.98 * wager
-        expect(expectedPayout).to.equal(980000000000000000n);
-        expect(bodyVar).to.equal(0n);
-        // Probability WAD = rating * 1e18 / 10000
-        const expectedProbWad = (BigInt(rating) * 1000000000000000000n) / 10000n;
-        expect(probWad).to.equal(expectedProbWad);
-        // Max payout = wager * 9800 / rating
-        const expectedMax = (wager * 9800n) / BigInt(rating);
-        expect(maxPayout).to.equal(expectedMax);
+  describe("paytable and quotes", () => {
+    it("reserves exactly the top route: 40x from the Moon, 64x from Jupiter or a Pulsar", async () => {
+      const cases = [
+        { body: MOON, payout: 39_200_000_000_000_000_000n },
+        { body: JUPITER, payout: 62_720_000_000_000_000_000n },
+        { body: PULSAR, payout: 62_720_000_000_000_000_000n },
+      ];
+      for (const { body, payout } of cases) {
+        const [escrow, reserve] = await game.read.quoteCaps([WAGER, gameData(body)]);
+        expect(escrow).to.equal(WAGER);
+        expect(reserve).to.equal(payout - WAGER);
       }
     });
 
-    it("should reject invalid risk ratings or celestial IDs in quotes", async () => {
-      const wager = 1000000000000000000n;
-
-      // Below 100 bps (< 1.00%)
-      const gameDataLow = encodeSlingshotData(99, 0);
-      try {
-        await slingshot.read.quoteCaps([wager, gameDataLow]);
-        expect.fail("Should have reverted on low risk rating");
-      } catch (err: any) {
-        expect(err.message).to.include("reverted");
-      }
-
-      // Above 9800 bps (> 98.00%)
-      const gameDataHigh = encodeSlingshotData(9801, 0);
-      try {
-        await slingshot.read.quoteCaps([wager, gameDataHigh]);
-        expect.fail("Should have reverted on high risk rating");
-      } catch (err: any) {
-        expect(err.message).to.include("reverted");
-      }
-
-      // Invalid celestial ID (> 2)
-      const gameDataCel = encodeSlingshotData(5000, 3);
-      try {
-        await slingshot.read.quoteCaps([wager, gameDataCel]);
-        expect.fail("Should have reverted on invalid celestial ID");
-      } catch (err: any) {
-        expect(err.message).to.include("reverted");
+    it("quotes risk params: top-tier probability, 98% mean, strategy-bounded body variance", async () => {
+      const cases = [
+        { body: MOON, prob: 25_000_000_000_000_000n, secondMoment: 25n },
+        { body: JUPITER, prob: 15_625_000_000_000_000n, secondMoment: 40n },
+        { body: PULSAR, prob: 15_625_000_000_000_000n, secondMoment: 40n },
+      ];
+      for (const { body, prob, secondMoment } of cases) {
+        const [maxPayout, probabilityWad, expected, bodyVar] = await game.read.quoteRiskParams([
+          WAGER,
+          gameData(body),
+        ]);
+        const [, reserve] = await game.read.quoteCaps([WAGER, gameData(body)]);
+        expect(maxPayout).to.equal(WAGER + reserve);
+        expect(probabilityWad).to.equal(prob);
+        expect(expected).to.equal((WAGER * 98n) / 100n);
+        const perUnitWad = (9800n * 9800n * (secondMoment - 1n) * 10n ** 18n) / 10n ** 8n;
+        expect(bodyVar).to.equal(WAGER * WAGER * perUnitWad);
       }
     });
-  });
 
-  describe("onSessionStart & Session Initialization", () => {
-    it("should validate and initialize session into WAITING_RANDOMNESS", async () => {
-      const wager = 1000000000000000000n;
-      const gameData = encodeSlingshotData(5000, 1);
-
-      const ctx = {
-        sessionId: 1n,
-        player: "0x1111111111111111111111111111111111111111" as `0x${string}`,
-        vault: "0x2222222222222222222222222222222222222222" as `0x${string}`,
-        wagerBase: wager,
-        escrowedStake: wager,
-        reservedProfit: 960000000000000000n,
-        step: 0,
-        gameData: gameData,
-        gameState: "0x" as `0x${string}`
-      };
-
-      const result = await slingshot.read.onSessionStart([ctx]);
-      expect(result.nextPhase).to.equal(SessionPhase.WAITING_RANDOMNESS);
-      expect(result.requestRandomnessNow).to.be.true;
-      expect(result.payout).to.equal(0n);
+    it("rejects malformed gameData and unknown bodies", async () => {
+      await expectRevert(game.read.quoteCaps([WAGER, gameData(3)]), "GravitySlingshot__InvalidBody");
+      await expectRevert(game.read.quoteCaps([WAGER, "0x01"]), "GravitySlingshot__InvalidGameData");
+      await expectRevert(game.read.quoteCaps([0n, gameData(MOON)]), "GravitySlingshot__InvalidWager");
     });
   });
 
-  describe("onRandomness & Settlement", () => {
-    it("should settle winning Slingshot escape with exact 98% RTP payout", async () => {
-      const wager = 1000000000000000000n; // 1 ETH
-      const rating = 5000; // 50% win probability -> 1.96x payout
-      const gameData = encodeSlingshotData(rating, 0);
+  describe("session state machine", () => {
+    it("opens by launching leg 1 and committing the full reserve", async () => {
+      const [, reserve] = await game.read.quoteCaps([WAGER, gameData(PULSAR)]);
+      const start = await game.read.onSessionStart([ctxFor(PULSAR)]);
+      expect(start.nextPhase).to.equal(Phase.WAITING_RANDOMNESS);
+      expect(start.requestRandomnessNow).to.equal(true);
+      expect(BigInt(start.reservedProfitDelta)).to.equal(reserve);
+      expect(BigInt(start.escrowDelta)).to.equal(0n);
+      const tour = decodeTour(start.newGameState);
+      expect(tour.status).to.equal(Status.BURNING);
+      expect(tour.legs).to.equal(1);
+      expect(tour.route).to.deep.equal([PULSAR, 255, 255, 255]);
+    });
 
-      const ctx = {
-        sessionId: 101n,
-        player: "0x1111111111111111111111111111111111111111" as `0x${string}`,
-        vault: "0x2222222222222222222222222222222222222222" as `0x${string}`,
-        wagerBase: wager,
-        escrowedStake: wager,
-        reservedProfit: 960000000000000000n,
-        step: 0,
-        gameData: gameData,
-        gameState: "0x" as `0x${string}`
-      };
+    it("captures the probe on a failed roll: settles with zero payout and zero deltas", async () => {
+      const start = await game.read.onSessionStart([ctxFor(MOON)]);
+      const lost = await game.read.onRandomness([ctxFor(MOON, start.newGameState), CAPTURE]);
+      expect(lost.nextPhase).to.equal(Phase.SETTLED);
+      expect(lost.payout).to.equal(0n);
+      expect(BigInt(lost.escrowDelta)).to.equal(0n);
+      expect(BigInt(lost.reservedProfitDelta)).to.equal(0n);
+      const tour = decodeTour(lost.newGameState);
+      expect(tour.status).to.equal(Status.CAPTURED);
+      expect(tour.rolls[0]).to.equal(9999);
+    });
 
-      // Construct a seed that yields rollBps < 5000 (e.g. 1000)
-      const winningSeed = ("0x" + BigInt(1000).toString(16).padStart(64, "0")) as `0x${string}`;
-      const result = await slingshot.read.onRandomness([ctx, winningSeed]);
+    it("uses the exact survival thresholds (roll < threshold survives)", async () => {
+      for (const body of BODIES) {
+        const start = await game.read.onSessionStart([ctxFor(body)]);
+        const edge = Number(SURVIVE_BPS[body]);
+        const last = await game.read.onRandomness([ctxFor(body, start.newGameState), seedForRoll(edge - 1)]);
+        const first = await game.read.onRandomness([ctxFor(body, start.newGameState), seedForRoll(edge)]);
+        expect(last.nextPhase).to.equal(Phase.WAITING_PLAYER_ACTION);
+        expect(first.nextPhase).to.equal(Phase.SETTLED);
+      }
+    });
 
-      expect(result.nextPhase).to.equal(SessionPhase.SETTLED);
-      expect(result.requestRandomnessNow).to.be.false;
-      expect(result.payout).to.equal(1960000000000000000n); // 1.96 ETH
-      expect(result.escrowDelta).to.equal(-BigInt(wager));
-      expect(result.reservedProfitDelta).to.equal(-960000000000000000n);
-
-      // Verify decoded game state
-      const [resolved, escaped, rollBps, riskRatingBps, celestialId, payout] = decodeAbiParameters(
-        parseAbiParameters("bool, bool, uint16, uint16, uint8, uint256"),
-        result.newGameState
+    it("enforces the route rule, the action codes and the phase guards", async () => {
+      const start = await game.read.onSessionStart([ctxFor(JUPITER)]);
+      const burning = start.newGameState;
+      await expectRevert(
+        game.read.onPlayerAction([ctxFor(JUPITER, burning), action(EJECT)]),
+        "GravitySlingshot__NotCruising"
       );
-      expect(resolved).to.be.true;
-      expect(escaped).to.be.true;
-      expect(rollBps).to.equal(1000);
-      expect(riskRatingBps).to.equal(5000);
-      expect(celestialId).to.equal(0);
-      expect(payout).to.equal(1960000000000000000n);
+      const cruising = (await game.read.onRandomness([ctxFor(JUPITER, burning), SURVIVE])).newGameState;
+      await expectRevert(
+        game.read.onRandomness([ctxFor(JUPITER, cruising), SURVIVE]),
+        "GravitySlingshot__NotBurning"
+      );
+      await expectRevert(
+        game.read.onPlayerAction([ctxFor(JUPITER, cruising), action(LAUNCH, JUPITER)]),
+        "GravitySlingshot__RepeatBody"
+      );
+      await expectRevert(
+        game.read.onPlayerAction([ctxFor(JUPITER, cruising), action(LAUNCH, 3)]),
+        "GravitySlingshot__InvalidBody"
+      );
+      await expectRevert(
+        game.read.onPlayerAction([ctxFor(JUPITER, cruising), action(9)]),
+        "GravitySlingshot__InvalidAction"
+      );
     });
 
-    it("should settle losing Slingshot capture with 0 payout", async () => {
-      const wager = 1000000000000000000n;
-      const rating = 5000; // 50% win chance
-      const gameData = encodeSlingshotData(rating, 0);
-
-      const ctx = {
-        sessionId: 102n,
-        player: "0x1111111111111111111111111111111111111111" as `0x${string}`,
-        vault: "0x2222222222222222222222222222222222222222" as `0x${string}`,
-        wagerBase: wager,
-        escrowedStake: wager,
-        reservedProfit: 960000000000000000n,
-        step: 0,
-        gameData: gameData,
-        gameState: "0x" as `0x${string}`
-      };
-
-      // Construct a seed that yields rollBps >= 5000 (e.g. 7500)
-      const losingSeed = ("0x" + BigInt(7500).toString(16).padStart(64, "0")) as `0x${string}`;
-      const result = await slingshot.read.onRandomness([ctx, losingSeed]);
-
-      expect(result.nextPhase).to.equal(SessionPhase.SETTLED);
-      expect(result.requestRandomnessNow).to.be.false;
-      expect(result.payout).to.equal(0n); // 0 payout
-
-      const [resolved, escaped, rollBps, riskRatingBps, celestialId, payout] = decodeAbiParameters(
-        parseAbiParameters("bool, bool, uint16, uint16, uint8, uint256"),
-        result.newGameState
+    it("quotes a forfeit value only while cruising, never while a leg is in flight", async () => {
+      const start = await game.read.onSessionStart([ctxFor(PULSAR)]);
+      expect(await game.read.quoteForfeitPayout([ctxFor(PULSAR, start.newGameState)])).to.equal(0n);
+      expect(await game.read.quoteForfeitPayout([ctxFor(PULSAR)])).to.equal(0n);
+      const cruising = (await game.read.onRandomness([ctxFor(PULSAR, start.newGameState), SURVIVE]))
+        .newGameState;
+      expect(await game.read.quoteForfeitPayout([ctxFor(PULSAR, cruising)])).to.equal(
+        expectedPayout([PULSAR])
       );
-      expect(resolved).to.be.true;
-      expect(escaped).to.be.false;
-      expect(rollBps).to.equal(7500);
-      expect(payout).to.equal(0n);
+    });
+
+    it("auto-settles after the fourth assist and pays exactly the committed cap", async () => {
+      const route = [PULSAR, JUPITER, PULSAR, JUPITER];
+      const { settle, reserve } = await flyAndBank(route);
+      expect(settle.nextPhase).to.equal(Phase.SETTLED);
+      expect(settle.payout).to.equal(WAGER + reserve); // 62.72x, no slack and no overflow
+      expect(decodeTour(settle.newGameState).status).to.equal(Status.COMPLETE);
     });
   });
 
-  describe("Determinism & Safety Invariants", () => {
-    it("should reject player actions since it is a single-step protocol", async () => {
-      const ctx = {
-        sessionId: 103n,
-        player: "0x1111111111111111111111111111111111111111" as `0x${string}`,
-        vault: "0x2222222222222222222222222222222222222222" as `0x${string}`,
-        wagerBase: 1000000000000000000n,
-        escrowedStake: 1000000000000000000n,
-        reservedProfit: 960000000000000000n,
-        step: 0,
-        gameData: encodeSlingshotData(5000, 0),
-        gameState: "0x" as `0x${string}`
-      };
+  describe("exhaustive strategy check (every route x every eject point)", () => {
+    const routes = allRoutes();
 
-      try {
-        await slingshot.read.onPlayerAction([ctx, "0x"]);
-        expect.fail("Should have reverted on player action");
-      } catch (err: any) {
-        expect(err.message).to.include("reverted");
+    it("enumerates all 45 legal strategies", () => {
+      expect(routes.length).to.equal(3 + 6 + 12 + 24);
+    });
+
+    it("pays exactly 98.00% expected return for every strategy, within the reserve", async () => {
+      for (const route of routes) {
+        const { settle, reserve } = await flyAndBank(route);
+        expect(settle.payout).to.equal(expectedPayout(route));
+        expect(settle.payout <= WAGER + reserve).to.equal(true);
+        expect(BigInt(settle.escrowDelta)).to.equal(0n);
+        expect(BigInt(settle.reservedProfitDelta)).to.equal(0n);
+        // E[payout] = P(survive every leg) * payout, checked in exact integer arithmetic.
+        const surviveNum = route.reduce((acc, body) => acc * SURVIVE_BPS[body], 1n);
+        const scale = 10000n ** BigInt(route.length);
+        expect(settle.payout * surviveNum * 100n).to.equal(WAGER * 98n * scale);
       }
     });
 
-    it("should return 0 quoteForfeitPayout mid-round", async () => {
-      const ctx = {
-        sessionId: 104n,
-        player: "0x1111111111111111111111111111111111111111" as `0x${string}`,
-        vault: "0x2222222222222222222222222222222222222222" as `0x${string}`,
-        wagerBase: 1000000000000000000n,
-        escrowedStake: 1000000000000000000n,
-        reservedProfit: 960000000000000000n,
-        step: 0,
-        gameData: encodeSlingshotData(5000, 0),
-        gameState: "0x" as `0x${string}`
-      };
-
-      const forfeit = await slingshot.read.quoteForfeitPayout([ctx]);
-      expect(forfeit).to.equal(0n);
+    it("topRoute is the best route, and the body-variance bound covers every non-top route", async () => {
+      for (const first of BODIES) {
+        const top = (await game.read.topRoute([first])).map(Number);
+        const product = (r: number[]) => {
+          const [num, den] = routeFraction(r);
+          return Number(num) / Number(den);
+        };
+        const fromFirst = routes.filter(r => r[0] === first);
+        const best = Math.max(...fromFirst.map(product));
+        expect(product(top)).to.equal(best);
+        const nonTop = fromFirst.filter(r => r.join() !== top.join()).map(product);
+        expect(Math.max(...nonTop)).to.equal(first === MOON ? 25 : 40);
+      }
     });
   });
 });

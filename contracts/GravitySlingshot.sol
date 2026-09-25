@@ -9,72 +9,178 @@ import {
 } from "./ICasinoGameV2.sol";
 
 /**
- * @title GravitySlingshot
- * @notice Novel astrodynamic orbital mechanics casino protocol implementing ICasinoGameV2.
- * @dev Complies with Deterministic Safety Standards: bounded loops,
- *      functions <= 60 lines, and assertion density >= 2.
- *      Uses rejection sampling to eliminate modulo bias.
+ * @title GravitySlingshot: Grand Tour
+ * @notice Press-your-luck route builder. The player flies a probe through up to four
+ *         gravity assists. Each leg they pick a body, and the next body must differ from
+ *         the last one (you cannot slingshot the body you are leaving). Every leg draws
+ *         fresh VRF randomness. After each surviving assist the player either EJECTS and
+ *         banks the tour value, or burns onward to the next body.
+ *
+ *           body      survive   leg multiplier
+ *           Moon        80%        1.25x
+ *           Jupiter     50%        2x
+ *           Pulsar      25%        4x
+ *
+ *         survive * multiplier = 1 on every leg, so each leg is a fair bet and the tour
+ *         value is a martingale. The 2% house edge is applied once, at settlement:
+ *           payout = wager * product(leg multipliers) * 0.98
+ *         Expected payout is therefore exactly 98% of the wager under ANY route or
+ *         stopping rule. The top route (Pulsar, Jupiter, Pulsar, Jupiter) pays 62.72x.
+ * @dev A strategy can only condition on "survived so far", so every strategy is a fixed
+ *      route plus an eject point. Tests enumerate all of them through these handlers.
  */
 contract GravitySlingshot is ICasinoGameV2 {
-  // Protocol constants
   uint256 public constant WAD = 1e18;
   uint256 public constant BASIS_POINTS = 10_000;
-  uint256 public constant RTP_BPS = 9_800; // 98.00% Return to Player
-  uint16 public constant MIN_RISK_BPS = 100; // 1.00% min win probability (98.00x max multiplier)
-  uint16 public constant MAX_RISK_BPS = 9_800; // 98.00% max win probability (1.00x min multiplier)
-  uint8 public constant MAX_CELESTIAL_ID = 2; // 0: Jupiter, 1: Pulsar, 2: Gargantua
+  uint256 public constant RTP_BPS = 9_800;
   uint256 public constant MAX_REHASH_ATTEMPTS = 8;
+  uint256 public constant TOUR_STATE_BYTES = 352; // 11 ABI words, see _encodeTour
 
-  // Custom errors
-  error GravitySlingshot__InvalidRiskRating(uint16 riskRatingBps);
-  error GravitySlingshot__InvalidCelestialId(uint8 celestialId);
+  uint8 public constant MAX_LEGS = 4;
+  uint8 public constant BODY_COUNT = 3;
+  uint8 public constant NO_BODY = 255;
+
+  uint8 public constant MOON = 0;
+  uint8 public constant JUPITER = 1;
+  uint8 public constant PULSAR = 2;
+
+  uint8 public constant ACTION_LAUNCH = 1;
+  uint8 public constant ACTION_EJECT = 2;
+
+  uint8 public constant STATUS_CRUISING = 0; // survived the last leg, player to act
+  uint8 public constant STATUS_BURNING = 1; // leg launched, waiting for VRF
+  uint8 public constant STATUS_CAPTURED = 2; // lost: probe captured by the body
+  uint8 public constant STATUS_EJECTED = 3; // won: player banked mid-tour
+  uint8 public constant STATUS_COMPLETE = 4; // won: survived all four legs
+
   error GravitySlingshot__InvalidWager(uint256 wager);
+  error GravitySlingshot__InvalidGameData();
+  error GravitySlingshot__InvalidTourState();
+  error GravitySlingshot__InvalidBody(uint8 body);
+  error GravitySlingshot__RepeatBody(uint8 body);
+  error GravitySlingshot__TourComplete();
+  error GravitySlingshot__InvalidAction(uint8 action);
+  error GravitySlingshot__NotCruising(uint8 status);
+  error GravitySlingshot__NotBurning(uint8 status);
   error GravitySlingshot__EntropyExhausted();
-  error GravitySlingshot__NoPlayerActions();
 
-  struct SlingshotConfig {
-    uint16 riskRatingBps;
-    uint8 celestialId;
+  struct Tour {
+    uint8 status;
+    uint8 legs; // legs launched so far, the pending one included
+    uint8[4] route; // body per leg, NO_BODY when unused
+    uint16[4] rolls; // VRF roll in [0, 9999] per resolved leg
+    uint256 payout; // final payout once settled, else 0
   }
 
-  function decodeGameData(bytes calldata gameData) public pure returns (SlingshotConfig memory config) {
-    require(gameData.length >= 3, "Invalid gameData length");
-    (uint16 riskRatingBps, uint8 celestialId) = abi.decode(gameData, (uint16, uint8));
-    _validateConfig(riskRatingBps, celestialId);
-    config = SlingshotConfig({riskRatingBps: riskRatingBps, celestialId: celestialId});
-    require(config.riskRatingBps >= MIN_RISK_BPS, "Config out of bounds");
+  // ---------------------------------------------------------------------------
+  // Paytable
+  // ---------------------------------------------------------------------------
+
+  /// @notice Survival threshold: a leg survives when roll < surviveBps(body).
+  function surviveBps(uint8 body) public pure returns (uint16) {
+    if (body == MOON) return 8_000;
+    if (body == JUPITER) return 5_000;
+    if (body == PULSAR) return 2_500;
+    revert GravitySlingshot__InvalidBody(body);
   }
 
-  function _validateConfig(uint16 riskRatingBps, uint8 celestialId) internal pure {
-    if (riskRatingBps < MIN_RISK_BPS || riskRatingBps > MAX_RISK_BPS) {
-      revert GravitySlingshot__InvalidRiskRating(riskRatingBps);
+  /// @notice Leg multiplier as an exact fraction num / den.
+  function legMultiplier(uint8 body) public pure returns (uint256 num, uint256 den) {
+    if (body == MOON) return (5, 4);
+    if (body == JUPITER) return (2, 1);
+    if (body == PULSAR) return (4, 1);
+    revert GravitySlingshot__InvalidBody(body);
+  }
+
+  /// @notice Product of the first `legs` leg multipliers, as an exact fraction.
+  function routeMultiplier(
+    uint8[4] memory route,
+    uint8 legs
+  ) public pure returns (uint256 num, uint256 den) {
+    require(legs <= MAX_LEGS, "Route longer than tour");
+    num = 1;
+    den = 1;
+    for (uint8 i = 0; i < legs; i++) {
+      (uint256 n, uint256 d) = legMultiplier(route[i]);
+      num *= n;
+      den *= d;
     }
-    if (celestialId > MAX_CELESTIAL_ID) {
-      revert GravitySlingshot__InvalidCelestialId(celestialId);
-    }
-    require(riskRatingBps <= BASIS_POINTS, "Risk rating exceeds basis");
+    assert(num >= den); // every leg multiplier is >= 1
   }
 
-  function calculatePayout(uint256 wager, uint16 riskRatingBps) public pure returns (uint256) {
-    require(wager > 0, "Wager must be positive");
-    require(riskRatingBps >= MIN_RISK_BPS && riskRatingBps <= MAX_RISK_BPS, "Invalid risk rating");
-    // Payout = wager * 9800 / riskRatingBps (exact 98.00% RTP)
-    return (wager * RTP_BPS) / uint256(riskRatingBps);
+  /// @notice The single payout function behind caps, risk, eject, completion and forfeit.
+  /// @dev One division, rounding down, so no route can pay above the committed reserve.
+  function tourPayout(
+    uint256 wager,
+    uint8[4] memory route,
+    uint8 legs
+  ) public pure returns (uint256) {
+    require(legs >= 1, "Tour has no legs");
+    (uint256 num, uint256 den) = routeMultiplier(route, legs);
+    return (wager * num * RTP_BPS) / (den * BASIS_POINTS);
   }
+
+  /// @notice Highest-paying legal route for a given first body (verified by enumeration in tests).
+  function topRoute(uint8 firstBody) public pure returns (uint8[4] memory route) {
+    if (firstBody == MOON) return [MOON, PULSAR, JUPITER, PULSAR]; // 40x
+    if (firstBody == JUPITER) return [JUPITER, PULSAR, JUPITER, PULSAR]; // 64x
+    if (firstBody == PULSAR) return [PULSAR, JUPITER, PULSAR, JUPITER]; // 64x
+    revert GravitySlingshot__InvalidBody(firstBody);
+  }
+
+  function maxPayout(uint256 wager, uint8 firstBody) public pure returns (uint256 payout) {
+    if (wager == 0) revert GravitySlingshot__InvalidWager(wager);
+    payout = tourPayout(wager, topRoute(firstBody), MAX_LEGS);
+    require(payout > wager, "Top route must pay above stake");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Encoding
+  // ---------------------------------------------------------------------------
+
+  /// @notice gameData = abi.encode(uint8 firstBody). Opening a session launches leg 1.
+  function decodeGameData(bytes calldata gameData) public pure returns (uint8 firstBody) {
+    if (gameData.length != 32) revert GravitySlingshot__InvalidGameData();
+    firstBody = abi.decode(gameData, (uint8));
+    if (firstBody >= BODY_COUNT) revert GravitySlingshot__InvalidBody(firstBody);
+  }
+
+  function decodeTour(bytes memory state) public pure returns (Tour memory tour) {
+    if (state.length != TOUR_STATE_BYTES) revert GravitySlingshot__InvalidTourState();
+    (tour.status, tour.legs, tour.route, tour.rolls, tour.payout) = abi.decode(
+      state,
+      (uint8, uint8, uint8[4], uint16[4], uint256)
+    );
+    if (tour.legs == 0 || tour.legs > MAX_LEGS) revert GravitySlingshot__InvalidTourState();
+    if (tour.status > STATUS_COMPLETE) revert GravitySlingshot__InvalidTourState();
+  }
+
+  function _encodeTour(Tour memory tour) internal pure returns (bytes memory state) {
+    state = abi.encode(tour.status, tour.legs, tour.route, tour.rolls, tour.payout);
+    assert(state.length == TOUR_STATE_BYTES);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quotes
+  // ---------------------------------------------------------------------------
 
   function quoteCaps(
     uint256 wager,
     bytes calldata gameData
   ) external pure override returns (uint256 maxEscrowStake, uint256 maxReservedProfit) {
-    if (wager == 0) revert GravitySlingshot__InvalidWager(wager);
-    SlingshotConfig memory cfg = decodeGameData(gameData);
+    uint8 firstBody = decodeGameData(gameData);
     maxEscrowStake = wager;
-    uint256 grossPayout = calculatePayout(wager, cfg.riskRatingBps);
-    maxReservedProfit = grossPayout > wager ? grossPayout - wager : 0;
-    require(maxEscrowStake == wager, "Escrow mismatch");
-    require(maxReservedProfit >= 0, "Reserved profit negative");
+    maxReservedProfit = maxPayout(wager, firstBody) - wager;
   }
 
+  /**
+   * @dev Risk inputs, all bounded over every strategy:
+   *  - maxPayout / probabilityWad: the top route. Legs are fair, so P(top) = 1 / multiplier.
+   *  - bodyVarianceScaled: variance per unit wager is 0.98^2 * (E[M^2] - 1), and for a
+   *    fixed route E[M^2] = product of its leg multipliers. The largest product among
+   *    routes that never pay the top tier is 40 (Jupiter or Pulsar first) or 25 (Moon
+   *    first). The binary top-tier term alone already bounds the total variance.
+   */
   function quoteRiskParams(
     uint256 wager,
     bytes calldata gameData
@@ -83,102 +189,144 @@ contract GravitySlingshot is ICasinoGameV2 {
     pure
     override
     returns (
-      uint256 maxPayout,
+      uint256 maxPayout_,
       uint256 probabilityWad,
       uint256 expectedPayout,
       uint256 bodyVarianceScaled
     )
   {
-    if (wager == 0) revert GravitySlingshot__InvalidWager(wager);
-    SlingshotConfig memory cfg = decodeGameData(gameData);
-    maxPayout = calculatePayout(wager, cfg.riskRatingBps);
-    probabilityWad = (uint256(cfg.riskRatingBps) * WAD) / BASIS_POINTS;
+    uint8 firstBody = decodeGameData(gameData);
+    maxPayout_ = maxPayout(wager, firstBody);
+    (uint256 num, uint256 den) = routeMultiplier(topRoute(firstBody), MAX_LEGS);
+    probabilityWad = (den * WAD + num - 1) / num; // ceil(1 / multiplier)
     expectedPayout = (wager * RTP_BPS) / BASIS_POINTS;
-    bodyVarianceScaled = 0; // Single winning tier
-    require(maxPayout >= wager, "Max payout below wager");
-    require(expectedPayout == (wager * 98) / 100, "Expected payout RTP mismatch");
+    uint256 secondMoment = firstBody == MOON ? 25 : 40;
+    uint256 bodyVarianceWad = (RTP_BPS * RTP_BPS * (secondMoment - 1) * WAD) /
+      (BASIS_POINTS * BASIS_POINTS);
+    bodyVarianceScaled = wager * wager * bodyVarianceWad;
   }
 
+  /// @notice Anytime cash-out value: the eject payout while cruising, 0 while a leg is in flight.
+  /// @dev Fully determined by revealed state, and the facet pays 90% of it on forfeit,
+  ///      which is always worse for the player than ejecting.
+  function quoteForfeitPayout(SessionContext calldata ctx) external pure override returns (uint256) {
+    if (ctx.gameState.length != TOUR_STATE_BYTES) return 0;
+    Tour memory tour = decodeTour(ctx.gameState);
+    if (tour.status != STATUS_CRUISING) return 0;
+    return tourPayout(ctx.wagerBase, tour.route, tour.legs);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session steps
+  // ---------------------------------------------------------------------------
+
+  /// @notice Opens the tour and launches leg 1 around the body chosen in gameData.
   function onSessionStart(
     SessionContext calldata ctx
-  ) external pure override returns (StepResult memory) {
-    if (ctx.wagerBase == 0) revert GravitySlingshot__InvalidWager(ctx.wagerBase);
-    SlingshotConfig memory cfg = decodeGameData(ctx.gameData);
-    require(cfg.riskRatingBps >= MIN_RISK_BPS, "Invalid start config");
+  ) external pure override returns (StepResult memory result) {
+    uint8 firstBody = decodeGameData(ctx.gameData);
+    uint256 reserve = maxPayout(ctx.wagerBase, firstBody) - ctx.wagerBase;
 
-    return StepResult({
-      newGameState: "",
-      escrowDelta: 0,
-      reservedProfitDelta: 0,
-      nextPhase: SessionPhase.WAITING_RANDOMNESS,
-      requestRandomnessNow: true,
-      payout: 0
-    });
+    Tour memory tour = _newTour();
+    tour.status = STATUS_BURNING;
+    tour.legs = 1;
+    tour.route[0] = firstBody;
+
+    result.newGameState = _encodeTour(tour);
+    result.reservedProfitDelta = int256(reserve);
+    result.nextPhase = SessionPhase.WAITING_RANDOMNESS;
+    result.requestRandomnessNow = true;
   }
 
+  /// @notice actionData = abi.encode(uint8 action, uint8 body). EJECT ignores body.
   function onPlayerAction(
     SessionContext calldata ctx,
     bytes calldata actionData
-  ) external pure override returns (StepResult memory) {
-    require(ctx.sessionId >= 0, "Valid session");
-    require(actionData.length >= 0, "Valid actionData");
-    revert GravitySlingshot__NoPlayerActions();
-  }
+  ) external pure override returns (StepResult memory result) {
+    Tour memory tour = decodeTour(ctx.gameState);
+    if (tour.status != STATUS_CRUISING) revert GravitySlingshot__NotCruising(tour.status);
+    require(actionData.length == 64, "Invalid actionData length");
+    (uint8 action, uint8 body) = abi.decode(actionData, (uint8, uint8));
 
-  function _drawUniformBps(bytes32 seed) internal pure returns (uint16 rollBps) {
-    require(seed != bytes32(0), "Empty seed");
-    uint256 sample = uint256(seed);
-    // Unbiased rejection sampling for span 10,000
-    uint256 limit = type(uint256).max - (type(uint256).max % BASIS_POINTS);
-    for (uint256 attempt = 0; attempt < MAX_REHASH_ATTEMPTS; attempt++) {
-      if (sample < limit) {
-        rollBps = uint16(sample % BASIS_POINTS);
-        require(rollBps < BASIS_POINTS, "Roll out of bounds");
-        return rollBps;
-      }
-      sample = uint256(keccak256(abi.encodePacked(seed, attempt)));
-    }
-    revert GravitySlingshot__EntropyExhausted();
+    if (action == ACTION_EJECT) return _settle(ctx.wagerBase, tour, STATUS_EJECTED);
+    if (action != ACTION_LAUNCH) revert GravitySlingshot__InvalidAction(action);
+
+    _checkLaunch(tour, body);
+    tour.route[tour.legs] = body;
+    tour.legs += 1;
+    tour.status = STATUS_BURNING;
+
+    result.newGameState = _encodeTour(tour);
+    result.nextPhase = SessionPhase.WAITING_RANDOMNESS;
+    result.requestRandomnessNow = true;
   }
 
   function onRandomness(
     SessionContext calldata ctx,
     bytes32 randomness
-  ) external pure override returns (StepResult memory) {
-    require(randomness != bytes32(0), "Randomness cannot be zero");
-    require(ctx.wagerBase > 0, "Invalid wagerBase");
+  ) external pure override returns (StepResult memory result) {
+    Tour memory tour = decodeTour(ctx.gameState);
+    if (tour.status != STATUS_BURNING) revert GravitySlingshot__NotBurning(tour.status);
 
-    SlingshotConfig memory cfg = decodeGameData(ctx.gameData);
-    uint16 rollBps = _drawUniformBps(randomness);
+    uint8 leg = tour.legs - 1;
+    uint16 roll = _drawUniformBps(randomness);
+    tour.rolls[leg] = roll;
 
-    bool escaped = rollBps < cfg.riskRatingBps;
-    uint256 payout = 0;
-    if (escaped) {
-      payout = calculatePayout(ctx.wagerBase, cfg.riskRatingBps);
+    if (roll >= surviveBps(tour.route[leg])) {
+      tour.status = STATUS_CAPTURED;
+      result.newGameState = _encodeTour(tour);
+      result.nextPhase = SessionPhase.SETTLED;
+      return result; // payout 0; the facet releases escrow and reserve itself
     }
+    if (tour.legs == MAX_LEGS) return _settle(ctx.wagerBase, tour, STATUS_COMPLETE);
 
-    bytes memory newGameState = abi.encode(
-      true, // resolved
-      escaped,
-      rollBps,
-      cfg.riskRatingBps,
-      cfg.celestialId,
-      payout
-    );
-
-    return StepResult({
-      newGameState: newGameState,
-      escrowDelta: -int256(ctx.escrowedStake),
-      reservedProfitDelta: -int256(ctx.reservedProfit),
-      nextPhase: SessionPhase.SETTLED,
-      requestRandomnessNow: false,
-      payout: payout
-    });
+    tour.status = STATUS_CRUISING;
+    result.newGameState = _encodeTour(tour);
+    result.nextPhase = SessionPhase.WAITING_PLAYER_ACTION;
   }
 
-  function quoteForfeitPayout(SessionContext calldata ctx) external pure override returns (uint256) {
-    require(ctx.sessionId >= 0, "Valid session");
-    require(ctx.wagerBase >= 0, "Valid wager");
-    return 0; // Single turn resolution, no mid-round forfeit value
+  // ---------------------------------------------------------------------------
+  // Internals
+  // ---------------------------------------------------------------------------
+
+  function _newTour() internal pure returns (Tour memory tour) {
+    tour.route = [NO_BODY, NO_BODY, NO_BODY, NO_BODY];
+  }
+
+  function _checkLaunch(Tour memory tour, uint8 body) internal pure {
+    if (tour.legs >= MAX_LEGS) revert GravitySlingshot__TourComplete();
+    if (body >= BODY_COUNT) revert GravitySlingshot__InvalidBody(body);
+    if (body == tour.route[tour.legs - 1]) revert GravitySlingshot__RepeatBody(body);
+  }
+
+  /// @dev Settling steps return zero escrow and reserve deltas: the facet caps the payout at
+  ///      escrowedStake + reservedProfit and releases both itself after this step.
+  function _settle(
+    uint256 wager,
+    Tour memory tour,
+    uint8 status
+  ) internal pure returns (StepResult memory result) {
+    uint256 payout = tourPayout(wager, tour.route, tour.legs);
+    assert(payout <= maxPayout(wager, tour.route[0]));
+    tour.status = status;
+    tour.payout = payout;
+    result.newGameState = _encodeTour(tour);
+    result.nextPhase = SessionPhase.SETTLED;
+    result.payout = payout;
+  }
+
+  /// @dev Unbiased roll in [0, 9999] by rejection sampling (no modulo bias).
+  function _drawUniformBps(bytes32 seed) internal pure returns (uint16 rollBps) {
+    uint256 sample = uint256(seed);
+    uint256 limit = type(uint256).max - (type(uint256).max % BASIS_POINTS);
+    for (uint256 attempt = 0; attempt < MAX_REHASH_ATTEMPTS; attempt++) {
+      if (sample < limit) {
+        rollBps = uint16(sample % BASIS_POINTS);
+        assert(rollBps < BASIS_POINTS);
+        return rollBps;
+      }
+      sample = uint256(keccak256(abi.encodePacked(seed, attempt)));
+    }
+    revert GravitySlingshot__EntropyExhausted();
   }
 }

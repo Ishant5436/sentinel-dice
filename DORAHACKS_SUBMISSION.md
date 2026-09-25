@@ -2,7 +2,7 @@
 
 ## Basic Information
 - **Project Name:** Gravity Slingshot Protocol
-- **Tagline:** Provably Fair Astrodynamic Orbital Mechanics Casino Protocol on Base (`ICasinoGameV2`)
+- **Tagline:** Grand Tour: a press-your-luck route builder. Chain up to four gravity assists, bank between legs, 98.00% RTP on every route (`ICasinoGameV2` multi-step)
 - **Hackathon:** Chain Jam Vol. 1 ($1,000 USDC + 25% Lifetime Revenue Share)
 - **Ecosystem:** Base Network / EVM / Chain.wtf
 - **Repository:** https://github.com/Ishant5436/sentinel-dice
@@ -15,52 +15,49 @@
 
 ## Executive Summary
 
-Gravity Slingshot is a novel astrodynamic orbital mechanics casino protocol built on Base specifically for Chain Jam Vol. 1 adhering to the official chain.wtf `ICasinoGameV2` standard.
+Gravity Slingshot: Grand Tour is a multi-step casino game built on the chain.wtf `ICasinoGameV2`
+standard. The player flies a probe through up to four gravity assists, picking the body for each
+leg: the Moon (80% survive, 1.25x), Jupiter (50%, 2x) or a Pulsar (25%, 4x). The probe can never
+slingshot the body it just left. After every surviving assist the player ejects to bank the tour
+value or burns onward, and every leg draws fresh on-chain VRF randomness.
 
-Replacing predictable classic casino copies and retail originals (banned under Section 03 of the Chain Jam rules), Gravity Slingshot lets players pilot an interstellar deep-space reconnaissance probe on a high-velocity hyperbolic trajectory around a massive celestial singularity (Jovian Gas Giant, Pulsar PSR-01, or Singularity Gargantua).
-
-The player calibrates their **Periapsis Proximity** (closest approach distance to the singularity):
-- **Closer Approach (High Risk / High Multiplier):** Exponential velocity increase upon escape, but narrower survival corridor before gravitational tidal forces pull the probe past the event horizon.
-- **Distant Approach (Low Risk / Low Multiplier):** Wide survival corridor, gentle trajectory deflection, safe modest return.
-
-The protocol operates at a mathematically proven **98.00% Return to Player (RTP)** with closed-form pricing across continuous risk ratings from 1.00% to 98.00% win probability ($1.00\times$ to $98.00\times$ multiplier).
-
----
+Every leg is a fair bet (survive x multiplier = 1) and the 2% edge is applied once at settlement
+(`payout = wager x product x 0.98`), so the expected return is exactly **98.00% for every route and
+every eject point**. The top route pays 62.72x (1 in 64).
 
 ## Technical Architecture
 
-### 1. ICasinoGameV2 Contract Compliance (`contracts/GravitySlingshot.sol`)
-Gravity Slingshot implements all required lifecycle methods defined by the chain.wtf diamond host:
-- `quoteCaps(wager, gameData)`: Calculates exact escrow requirements and maximum reserved profit for vault liquidity checks.
-- `quoteRiskParams(wager, gameData)`: Computes maximum payout, probability in WAD, expected payout, and body variance for portfolio Value-at-Risk (VaR) accounting.
-- `onSessionStart(ctx)`: Requests VRF entropy from the host and commits reserved profit.
-- `onRandomness(ctx, randomness)`: Evaluates escape trajectories via unbiased rejection sampling and returns deterministic settlement with zero `reservedProfitDelta`.
-- `quoteForfeitPayout(ctx)`: Returns zero to eliminate adverse-selection exploits against the vault on atomic games.
+### 1. ICasinoGameV2 multi-step session (`contracts/GravitySlingshot.sol`)
+- `quoteCaps` / `quoteRiskParams`: reserve and risk inputs for the best route reachable from the
+  chosen first body (39.2x from the Moon, 62.72x otherwise). `probabilityWad` is the top route's
+  probability; `bodyVarianceScaled` is an upper bound over all strategies.
+- `onSessionStart`: launches leg 1 (`WAITING_RANDOMNESS`) and commits the full reserve.
+- `onRandomness`: resolves the leg by rejection-sampled roll; captured settles at 0, the fourth
+  survived leg settles at the tour value, otherwise the session waits for the player.
+- `onPlayerAction`: `LAUNCH(body)` requests fresh randomness for the next leg; `EJECT` settles.
+  Settling steps return zero escrow and reserve deltas.
+- `quoteForfeitPayout`: the eject value between legs, 0 while a leg is in flight. The facet pays
+  90% of it on forfeit, which is always worse than ejecting.
+- A single payout function backs every quote and settlement, so the top route pays exactly the
+  committed cap.
 
-### 2. Zero Modulo Bias via Rejection Sampling
-Mapping raw 256-bit entropy directly to continuous basis points ($[0, 9999]$) via naive modulo creates asymmetric bias because $2^{256} \pmod{10000} \neq 0$.
+### 2. Zero modulo bias
+Each leg maps the 256-bit VRF word to `[0, 9999]` by rejection sampling with a bounded re-hash
+loop (at most 8 attempts), then survives when `roll < 8000 / 5000 / 2500`.
 
-Gravity Slingshot enforces canonical rejection sampling:
-```solidity
-uint256 limit = type(uint256).max - (type(uint256).max % BASIS_POINTS);
-for (uint256 attempt = 0; attempt < MAX_REHASH_ATTEMPTS; attempt++) {
-  if (sample < limit) {
-    rollBps = uint16(sample % BASIS_POINTS);
-    return rollBps;
-  }
-  sample = uint256(keccak256(abi.encodePacked(seed, attempt)));
-}
-```
+### 3. Verification
+- `npm test`: 27 passing. This includes an exhaustive check of all 45 legal strategies (every route
+  x every eject point) through the contract's real step functions, asserting 98.00% expected return
+  in exact integer arithmetic, and end-to-end runs through the casino-sdk `LocalCasinoHost`
+  (bust, eject, full 62.72x tour, rejected repeat body, forfeit).
+- `node scripts/monte-carlo.ts`: empirical RTP per strategy, driven by the same state machine as
+  the UI.
+- Played end to end in the casino-sdk local simulator (open, per-leg VRF, burn, eject, payout).
 
-### 3. Deterministic Safety Standards Compliance
-The contract adheres to mission-critical engineering invariants:
-- **Function Bounding:** Every function strictly bounded to $\le 60$ lines of code.
-- **Assertion Density:** Every function enforces a minimum assertion/check density of $\ge 2$.
-- **Zero Dynamic Memory on Hot Path:** Zero dynamic allocations during session execution.
-- **Bounded Loops:** Sampling bounded to a maximum of 8 rehash attempts.
-- **Static Invariant Audit:** Verified by automated AST script (`scripts/audit_safety_invariants.py`).
-
-### 4. 60 FPS Canvas Physics & Procedural Web Audio Engine
-- **HTML5 Canvas:** Real-time 2D Verlet numerical trajectory integration, particle ion thruster plumes, relativistic magnetic beam jets, and black hole gravitational photon rings.
-- **Web Audio API:** Zero external audio assets; procedurally synthesizes relativistic Doppler sweeps (160 Hz $\to$ 720 Hz), gravity well hums (55 Hz), escape harmonic chords, and sub-bass singularity implosions.
-- **Tracking Widget:** Preserves official Chain Jam script `<script async src="https://jam.chain.wtf/widget.js"></script>`.
+### 4. Frontend
+- React + Canvas stage with a persistent render loop: approach, periapsis hold while the VRF
+  resolves, then slingshot exit or capture spiral.
+- The Moon, Jupiter and the Pulsar are rendered in Blender (procedural Cycles shaders,
+  `scripts/blender/`) as 36-frame spin loops.
+- Procedural Web Audio cues, keyboard controls, host session resume, and a standalone demo mode.
+- Chain Jam widget preserved: `<script async src="https://jam.chain.wtf/widget.js"></script>`.

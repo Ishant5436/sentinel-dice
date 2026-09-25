@@ -1,546 +1,536 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { formatUnits, parseUnits } from 'viem';
+import { computeMaxWager } from '@chain/casino-sdk/guest';
 import { useCasinoHost } from './lib/useCasinoHost';
+import { useGrandTour, isTerminalTour, type HistoryEntry, type Round } from './lib/useGrandTour';
 import {
-  encodeSlingshotData,
-  decodeSlingshotState,
-  calculateSlingshotPayout,
-  getMultiplier,
-  RISK_PRESETS,
-  type SlingshotOutcome
+  BODIES,
+  MAX_LEGS,
+  TourStatus,
+  flownRoute,
+  legalNextBodies,
+  maxPayoutMultiplier,
+  routeMultiplier,
+  survivedRoute,
+  tourPayout,
+  type BodyId,
+  type Tour,
 } from './lib/slingshot';
-import { OrbitalCanvas, type CelestialType } from './components/OrbitalCanvas';
+import { TourCanvas, type CanvasPhase, type CanvasScene } from './components/TourCanvas';
 import { orbitalAudio } from './audio/orbitalAudio';
-import {
-  Rocket,
-  Shield,
-  Gauge,
-  Volume2,
-  VolumeX,
-  ExternalLink,
-  Sparkles,
-  AlertTriangle,
-  History,
-  CheckCircle2,
-  Orbit
-} from 'lucide-react';
+import { AlertTriangle, CheckCircle2, History, Orbit, Rocket, Shield, Sparkles, Volume2, VolumeX } from 'lucide-react';
 
-interface FlightRecord {
-  id: string;
-  timestamp: string;
-  celestial: CelestialType;
-  riskRatingBps: number;
-  multiplier: number;
-  escaped: boolean;
-  rollBps: number;
-  payoutEth: string;
+const BODY_STYLE: Record<BodyId, { dot: string; ring: string; text: string }> = {
+  0: { dot: 'from-slate-200 to-slate-500', ring: 'border-slate-400/60 bg-slate-500/10', text: 'text-slate-200' },
+  1: { dot: 'from-amber-200 to-orange-600', ring: 'border-amber-400/60 bg-amber-500/10', text: 'text-amber-300' },
+  2: { dot: 'from-white to-cyan-500', ring: 'border-cyan-400/60 bg-cyan-500/10', text: 'text-cyan-300' },
+};
+const WAGER_PRESETS = ['0.01', '0.1', '1', '10'];
+
+const pct = (bps: number) => `${bps / 100}%`;
+const mult = (x: number) => `x${x.toFixed(2)}`;
+
+function useAmountFormatter(decimals: number) {
+  return (value: bigint) => {
+    const n = Number(formatUnits(value, decimals));
+    return n >= 1000 ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : n.toFixed(4);
+  };
+}
+
+function canvasPhase(tour: Tour): CanvasPhase {
+  if (tour.status === TourStatus.BURNING) return 'burning';
+  if (tour.status === TourStatus.CRUISING) return 'survived';
+  if (tour.status === TourStatus.CAPTURED) return 'captured';
+  if (tour.status === TourStatus.EJECTED) return 'ejected';
+  return 'complete';
+}
+
+function BodyDot({ body, size = 'w-4 h-4' }: { body: BodyId; size?: string }) {
+  return <span className={`inline-block rounded-full bg-gradient-to-br ${BODY_STYLE[body].dot} ${size} shrink-0`} />;
+}
+
+function RouteStrip({ tour }: { tour: Tour | null }) {
+  const flown = tour ? flownRoute(tour) : [];
+  let running = 1;
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      {Array.from({ length: MAX_LEGS }, (_, leg) => {
+        const body = flown[leg] as BodyId | undefined;
+        const inFlight = tour !== null && leg === tour.legs - 1 && tour.status === TourStatus.BURNING;
+        const lost = tour !== null && leg === tour.legs - 1 && tour.status === TourStatus.CAPTURED;
+        const survived = body !== undefined && !inFlight && !lost;
+        if (survived) running *= routeMultiplier([body]);
+        const roll = tour?.rolls[leg];
+        return (
+          <div
+            key={leg}
+            title={body !== undefined && !inFlight ? `roll ${roll} vs gate < ${BODIES[body].surviveBps}` : undefined}
+            className={`rounded-lg border px-2 py-2 text-center font-mono transition-all ${
+              body === undefined
+                ? 'border-dashed border-gray-700 text-gray-600'
+                : lost
+                  ? 'border-red-500/60 bg-red-950/40 text-red-300'
+                  : inFlight
+                    ? 'border-cyan-400/70 bg-cyan-950/40 text-cyan-200 animate-pulse'
+                    : 'border-emerald-500/50 bg-emerald-950/30 text-emerald-300'
+            }`}
+          >
+            <div className="text-[10px] text-gray-500">LEG {leg + 1}</div>
+            {body === undefined ? (
+              <div className="text-sm py-0.5">?</div>
+            ) : (
+              <div className="flex items-center justify-center gap-1.5 text-xs font-bold py-0.5">
+                <BodyDot body={body} size="w-3 h-3" />
+                {BODIES[body].name}
+              </div>
+            )}
+            <div className="text-[10px]">
+              {survived ? mult(running) : lost ? 'CAPTURED' : inFlight ? `${pct(BODIES[body!].surviveBps)} to survive` : '--'}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function outcomeLine(round: Round, fmt: (v: bigint) => string, symbol: string) {
+  const tour = round.shown;
+  if (round.aborted === 'forfeited') return { tone: 'amber', title: 'TOUR FORFEITED', body: `Action window expired: paid 90% of cash-out, ${fmt(round.abortPayout)} ${symbol}` };
+  if (round.aborted === 'cancelled') return { tone: 'amber', title: 'RANDOMNESS TIMED OUT', body: 'The leg never resolved, so the stake was refunded.' };
+  const survived = survivedRoute(tour);
+  if (tour.status === TourStatus.COMPLETE) {
+    return { tone: 'gold', title: 'GRAND TOUR COMPLETE', body: `4 assists, ${mult(routeMultiplier(survived))} tour: +${fmt(tour.payout)} ${symbol}` };
+  }
+  if (tour.status === TourStatus.EJECTED) {
+    return { tone: 'gold', title: 'EJECTED AND BANKED', body: `${survived.length} assist${survived.length > 1 ? 's' : ''} at ${mult(routeMultiplier(survived))}: +${fmt(tour.payout)} ${symbol}` };
+  }
+  const leg = tour.legs - 1;
+  const body = BODIES[tour.route[leg]];
+  return { tone: 'red', title: `CAPTURED BY ${body.name.toUpperCase()}`, body: `Leg ${leg + 1}: roll ${tour.rolls[leg]} missed the < ${body.surviveBps} corridor.` };
 }
 
 export default function App() {
   const { hostApi, snapshot } = useCasinoHost();
-  const [celestial, setCelestial] = useState<CelestialType>('pulsar');
-  const [riskRatingBps, setRiskRatingBps] = useState<number>(5000); // 50.00% default
-  const [wagerEth, setWagerEth] = useState<string>('0.01');
-  const [phase, setPhase] = useState<'idle' | 'launching' | 'escaped' | 'captured'>('idle');
-  const [lastOutcome, setLastOutcome] = useState<SlingshotOutcome | null>(null);
-  const [history, setHistory] = useState<FlightRecord[]>([]);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [showFairness, setShowFairness] = useState<boolean>(false);
+  const { round, sceneKey, error, clearError, start, launch, eject, reset, history, demoBalance } = useGrandTour(hostApi, snapshot);
+  const [selected, setSelected] = useState<BodyId>(1);
+  const [wagerInput, setWagerInput] = useState('1');
+  const [muted, setMuted] = useState(false);
+  const [showRules, setShowRules] = useState(false);
 
-  const multiplier = useMemo(() => getMultiplier(riskRatingBps), [riskRatingBps]);
-  const winProbability = useMemo(() => (riskRatingBps / 100).toFixed(2), [riskRatingBps]);
+  const decimals = snapshot?.token.decimals ?? 18;
+  const symbol = hostApi ? (snapshot?.token.symbol ?? '') : 'DEMO';
+  const fmt = useAmountFormatter(decimals);
+  const balance = hostApi
+    ? snapshot?.balances.smartVaultBalance !== undefined
+      ? BigInt(snapshot.balances.smartVaultBalance)
+      : undefined
+    : demoBalance;
+  const walletReady = !hostApi || snapshot?.wallet.status === 'ready';
 
-  const celestialId = useMemo(() => {
-    if (celestial === 'jupiter') return 0;
-    if (celestial === 'pulsar') return 1;
-    return 2;
-  }, [celestial]);
-
-  const wagerWei = useMemo(() => {
+  const wager = useMemo(() => {
     try {
-      const parsed = parseFloat(wagerEth);
-      if (isNaN(parsed) || parsed <= 0) return 0n;
-      return BigInt(Math.floor(parsed * 1e18));
+      const parsed = parseUnits(wagerInput.trim() || '0', decimals);
+      return parsed > 0n ? parsed : null;
     } catch (err: unknown) {
-      console.warn('Wager parsing failed:', err);
-      return 0n;
+      console.warn('Unparseable wager input:', err);
+      return null;
     }
-  }, [wagerEth]);
+  }, [wagerInput, decimals]);
 
-  const potentialPayoutEth = useMemo(() => {
-    if (wagerWei === 0n) return '0.0000';
-    const payoutWei = calculateSlingshotPayout(wagerWei, riskRatingBps);
-    return (Number(payoutWei) / 1e18).toFixed(4);
-  }, [wagerWei, riskRatingBps]);
+  const maxWager = useMemo(() => {
+    const result = computeMaxWager(snapshot, { maxMultiplierX: maxPayoutMultiplier(selected) });
+    return result.kind === 'limit' ? result.maxWager : undefined;
+  }, [snapshot, selected]);
 
-  // Audio mute toggle
-  const toggleMute = () => {
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    orbitalAudio.setMuted(nextMuted);
-  };
+  const inTour = round !== null && !round.revealed;
+  const tour = round?.shown ?? null;
+  const survived = tour ? survivedRoute(tour) : [];
+  const cashValue = round && tour ? tourPayout(round.wager, survived) : 0n;
+  const nextBodies = round && tour && !round.busy ? legalNextBodies(tour) : [];
 
-  // React to host snapshot session updates
+  const launchBlocker = !walletReady
+    ? 'Connect your wallet in the host'
+    : wager === null
+      ? 'Enter a wager'
+      : balance !== undefined && wager > balance
+        ? 'Wager exceeds balance'
+        : maxWager !== undefined && wager > maxWager
+          ? `Max bet for this route is ${fmt(maxWager)} ${symbol}`
+          : null;
+
+  const scene: CanvasScene = useMemo(() => {
+    if (!round || !tour) return { key: sceneKey, phase: 'idle', body: selected };
+    return { key: sceneKey, phase: canvasPhase(tour), body: tour.route[tour.legs - 1] as BodyId };
+  }, [round, tour, sceneKey, selected]);
+
+  // Audio cues follow what the player sees, not raw chain events.
+  const lastCue = useRef('');
   useEffect(() => {
-    if (!snapshot) return;
-    const rawState = snapshot.sessions?.items?.[0]?.raw?.gameState;
-    if (rawState && rawState !== '0x') {
-      const decoded = decodeSlingshotState(rawState as `0x${string}`);
-      if (decoded && decoded.resolved) {
-        setLastOutcome(decoded);
-        if (decoded.escaped) {
-          setPhase('escaped');
-          orbitalAudio.playEscapeSuccess();
-        } else {
-          setPhase('captured');
-          orbitalAudio.playCaptureFailure();
-        }
+    if (!tour) return;
+    const cue = `${sceneKey}:${tour.status}:${tour.legs}`;
+    if (cue === lastCue.current) return;
+    lastCue.current = cue;
+    if (tour.status === TourStatus.BURNING) {
+      orbitalAudio.playGravityWellHum();
+      setTimeout(() => orbitalAudio.playPeriapsisSweep(), 900);
+    } else if (tour.status === TourStatus.CAPTURED) orbitalAudio.playCaptureFailure();
+    else orbitalAudio.playEscapeSuccess();
+  }, [tour, sceneKey]);
 
-        const newRecord: FlightRecord = {
-          id: Math.random().toString(36).substring(2, 9),
-          timestamp: new Date().toLocaleTimeString(),
-          celestial,
-          riskRatingBps: decoded.riskRatingBps,
-          multiplier: getMultiplier(decoded.riskRatingBps),
-          escaped: decoded.escaped,
-          rollBps: decoded.rollBps,
-          payoutEth: (Number(decoded.payout) / 1e18).toFixed(4),
-        };
-        setHistory((prev) => [newRecord, ...prev.slice(0, 19)]);
-      }
-    }
-  }, [snapshot, celestial]);
-
-  // Handle launch burn
-  const handleLaunch = async () => {
-    if (wagerWei === 0n || phase === 'launching') return;
-
-    setPhase('launching');
-    setLastOutcome(null);
-    orbitalAudio.playGravityWellHum();
-
-    // Sound sweep at periapsis approach
-    setTimeout(() => {
-      orbitalAudio.playPeriapsisSweep();
-    }, 700);
-
-    const gameData = encodeSlingshotData({
-      riskRatingBps,
-      celestialId,
-    });
-
-    if (hostApi) {
-      try {
-        await hostApi.openSession({
-          wager: wagerWei.toString(),
-          gameData,
-        });
-      } catch (err) {
-        console.error('Host openSession failed:', err);
-        setPhase('idle');
-      }
-    } else {
-      // Standalone simulation mode with rejection sampling
-      setTimeout(() => {
-        // Roll in [0, 9999] using the Web Crypto CSPRNG, not Math.random()
-        const rollBuf = new Uint32Array(1);
-        crypto.getRandomValues(rollBuf);
-        const rollBps = rollBuf[0] % 10000;
-        const escaped = rollBps < riskRatingBps;
-        const payout = escaped ? calculateSlingshotPayout(wagerWei, riskRatingBps) : 0n;
-
-        const outcome: SlingshotOutcome = {
-          resolved: true,
-          escaped,
-          rollBps,
-          riskRatingBps,
-          celestialId,
-          payout,
-        };
-        setLastOutcome(outcome);
-
-        if (escaped) {
-          setPhase('escaped');
-          orbitalAudio.playEscapeSuccess();
-        } else {
-          setPhase('captured');
-          orbitalAudio.playCaptureFailure();
-        }
-
-        const newRecord: FlightRecord = {
-          id: Math.random().toString(36).substring(2, 9),
-          timestamp: new Date().toLocaleTimeString(),
-          celestial,
-          riskRatingBps,
-          multiplier,
-          escaped,
-          rollBps,
-          payoutEth: (Number(payout) / 1e18).toFixed(4),
-        };
-        setHistory((prev) => [newRecord, ...prev.slice(0, 19)]);
-      }, 1400);
-    }
+  const pickBody = (body: BodyId) => {
+    if (inTour) return;
+    if (round?.revealed) reset();
+    setSelected(body);
+    orbitalAudio.playBlip(500 + body * 220);
+  };
+  const doLaunch = () => {
+    if (inTour || launchBlocker || wager === null) return;
+    void start(selected, wager);
   };
 
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value, 10);
-    setRiskRatingBps(val);
-    orbitalAudio.playBlip(600 + (val / 9800) * 400);
-  };
+  // Keyboard: 1-3 pick or burn a body, E ejects, Enter launches.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      const n = Number(e.key);
+      if (n >= 1 && n <= 3) {
+        const body = (n - 1) as BodyId;
+        if (inTour) {
+          if (nextBodies.includes(body)) void launch(body);
+        } else pickBody(body);
+      } else if (e.key.toLowerCase() === 'e' && nextBodies.length > 0) void eject();
+      else if (e.key === 'Enter' && !inTour) doLaunch();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
-  const applyPreset = (bps: number) => {
-    setRiskRatingBps(bps);
-    orbitalAudio.playBlip(880);
+  const outcome = round && (isTerminalTour(round.shown) || round.aborted) ? outcomeLine(round, fmt, symbol) : null;
+  const toneClass = {
+    gold: 'border-amber-400/60 bg-amber-950/40 text-amber-200',
+    red: 'border-red-500/50 bg-red-950/40 text-red-300',
+    amber: 'border-amber-600/50 bg-amber-950/30 text-amber-300',
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-black">
-      {/* Top Header */}
-      <header className="border-b border-gray-800 bg-gray-900/60 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans">
+      <header className="border-b border-gray-800 bg-gray-900/60 backdrop-blur-md">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-cyan-500/20 border border-cyan-400/40">
-              <Orbit className="w-6 h-6 text-black animate-spin-slow" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-emerald-400 flex items-center justify-center border border-cyan-400/40">
+              <Orbit className="w-6 h-6 text-black" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold tracking-wider text-white">GRAVITY SLINGSHOT</h1>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/80">
-                  BASE · ICASINOGAMEV2
-                </span>
-              </div>
-              <p className="text-xs text-gray-400 font-mono">Keplerian Astrodynamic Assist Protocol · 98.00% RTP</p>
+              <h1 className="text-lg font-bold tracking-wider text-white">
+                GRAVITY SLINGSHOT <span className="text-cyan-400">GRAND TOUR</span>
+              </h1>
+              <p className="text-xs text-gray-400 font-mono">Four gravity assists. Bank any time. 98.00% RTP on every route.</p>
             </div>
           </div>
-
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
-              onClick={toggleMute}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors border border-gray-700"
-              title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
+              onClick={() => {
+                setMuted(!muted);
+                orbitalAudio.setMuted(!muted);
+              }}
+              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700"
+              title={muted ? 'Unmute' : 'Mute'}
             >
-              {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-cyan-400" />}
+              {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-cyan-400" />}
             </button>
-
             <button
-              onClick={() => setShowFairness(!showFairness)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs font-mono text-gray-300 border border-gray-700 transition-colors"
+              onClick={() => setShowRules(!showRules)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs font-mono border border-gray-700"
             >
-              <Shield className="w-3.5 h-3.5 text-emerald-400" />
-              <span>98.00% RTP Math</span>
+              <Shield className="w-3.5 h-3.5 text-emerald-400" /> How it pays
             </button>
-
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-xs font-mono">
-              <span className={`w-2 h-2 rounded-full ${hostApi ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span className="text-gray-300">{hostApi ? 'CHAIN PROTOCOL' : 'STANDALONE DEMO'}</span>
+              <span className={`w-2 h-2 rounded-full ${hostApi ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              {hostApi ? 'ON-CHAIN' : 'DEMO MODE'}
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 flex flex-col gap-6 w-full">
-        {/* Provably Fair Info Modal */}
-        {showFairness && (
-          <div className="p-4 rounded-xl bg-gray-900/90 border border-cyan-500/30 text-xs text-gray-300 space-y-2 backdrop-blur">
-            <div className="flex items-center justify-between font-bold text-cyan-300 text-sm">
-              <span className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-emerald-400" /> Provably Fair Astrodynamic Formulation
-              </span>
-              <button onClick={() => setShowFairness(false)} className="text-gray-400 hover:text-white font-mono">✕</button>
+      <main className="max-w-6xl mx-auto px-4 pt-5 pb-16 flex-1 flex flex-col gap-5 w-full">
+        {showRules && (
+          <section className="p-4 rounded-xl bg-gray-900/90 border border-cyan-500/30 text-sm text-gray-300 grid gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <h2 className="font-bold text-cyan-300">The Grand Tour</h2>
+              <p>Pick a body and launch. Survive the slingshot and your tour value multiplies. Then eject to bank it, or burn on to a new body. You get up to four assists, and you can never slingshot the body you just left.</p>
+              <p>Every leg draws fresh on-chain VRF randomness. Rolls use rejection sampling, so there is no modulo bias.</p>
             </div>
-            <p>
-              Gravity Slingshot implements the <strong>ICasinoGameV2</strong> specification on Base. 
-              Outcomes are derived via <strong>Verifiable Random Function (VRF)</strong> using rejection sampling on a 256-bit entropy seed:
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono bg-black/40 p-3 rounded border border-gray-800">
-              <div>• RTP: <span className="text-emerald-400 font-bold">98.00%</span> (House edge: 2.00%)</div>
-              <div>• Multiplier Formula: <span className="text-cyan-400">9800 / RiskRatingBps</span></div>
-              <div>• Modulo Bias: <span className="text-emerald-400 font-bold">0.00%</span> (Rejection limit: 2^256 - rem)</div>
+            <div className="space-y-2">
+              <h2 className="font-bold text-emerald-300">Why it is always 98%</h2>
+              <p className="font-mono text-xs bg-black/40 rounded p-2 border border-gray-800">
+                Moon 80% x 1.25 = Jupiter 50% x 2 = Pulsar 25% x 4 = 1.00
+                <br />
+                payout = wager x (leg multipliers) x 0.98
+              </p>
+              <p>Every leg is a fair bet, and the 2% edge is taken once, when you bank. Whatever route you fly and whenever you eject, your expected return is exactly 98.00%. Your choices change the swing, never the edge. The contract tests check all 45 possible strategies with exact integer math.</p>
             </div>
+          </section>
+        )}
+
+        {error && (
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-red-500/40 bg-red-950/40 text-red-200 text-xs font-mono">
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+            </span>
+            <button onClick={clearError} className="text-red-300 hover:text-white">
+              dismiss
+            </button>
           </div>
         )}
 
-        {/* Game Arena Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left: 60 FPS Orbital Canvas */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* Stage */}
           <div className="lg:col-span-7 flex flex-col gap-3">
-            <OrbitalCanvas
-              celestial={celestial}
-              riskRatingBps={riskRatingBps}
-              phase={phase}
-              multiplier={multiplier}
-            />
-
-            {/* Target Singularity Selector */}
-            <div className="flex items-center justify-between p-2 rounded-xl bg-gray-900/60 border border-gray-800">
-              <span className="text-xs font-mono text-gray-400 px-2 uppercase flex items-center gap-1.5">
-                <Gauge className="w-3.5 h-3.5 text-cyan-400" /> Destination
-              </span>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setCelestial('jupiter')}
-                  className={`px-3 py-1 rounded-lg text-xs font-mono transition-all ${
-                    celestial === 'jupiter'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm shadow-amber-500/20'
-                      : 'text-gray-400 hover:text-gray-200'
-                  }`}
-                >
-                  Jovian Vortex
-                </button>
-                <button
-                  onClick={() => setCelestial('pulsar')}
-                  className={`px-3 py-1 rounded-lg text-xs font-mono transition-all ${
-                    celestial === 'pulsar'
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
-                      : 'text-gray-400 hover:text-gray-200'
-                  }`}
-                >
-                  Pulsar PSR-01
-                </button>
-                <button
-                  onClick={() => setCelestial('gargantua')}
-                  className={`px-3 py-1 rounded-lg text-xs font-mono transition-all ${
-                    celestial === 'gargantua'
-                      ? 'bg-red-500/20 text-red-300 border border-red-500/40 shadow-sm shadow-red-500/20'
-                      : 'text-gray-400 hover:text-gray-200'
-                  }`}
-                >
-                  Gargantua Singularity
-                </button>
+            <div className="relative h-[300px] sm:h-[380px] rounded-xl overflow-hidden border border-cyan-500/20 bg-gray-950">
+              <TourCanvas scene={scene} />
+              <div className="absolute top-3 left-3 font-mono text-xs space-y-1 pointer-events-none">
+                <div className="text-gray-400">
+                  LEG {tour ? Math.min(tour.legs, MAX_LEGS) : 0} / {MAX_LEGS}
+                </div>
+                {tour && (
+                  <div className={`flex items-center gap-1.5 ${BODY_STYLE[tour.route[tour.legs - 1] as BodyId].text}`}>
+                    <BodyDot body={tour.route[tour.legs - 1] as BodyId} size="w-3 h-3" />
+                    {BODIES[tour.route[tour.legs - 1]].name} {pct(BODIES[tour.route[tour.legs - 1]].surviveBps)} / {BODIES[tour.route[tour.legs - 1]].multLabel}
+                  </div>
+                )}
               </div>
-            </div>
-
-            {/* Resolution Banner */}
-            {lastOutcome && (
-              <div
-                className={`p-4 rounded-xl border flex items-center justify-between animate-fade-in ${
-                  lastOutcome.escaped
-                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                    : 'bg-red-950/40 border-red-500/40 text-red-300'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  {lastOutcome.escaped ? (
-                    <Sparkles className="w-6 h-6 text-emerald-400" />
-                  ) : (
-                    <AlertTriangle className="w-6 h-6 text-red-400" />
-                  )}
-                  <div>
-                    <h3 className="font-bold text-sm">
-                      {lastOutcome.escaped ? 'ESCAPE TRAJECTORY ACHIEVED!' : 'GRAVITATIONAL TIDAL CAPTURE!'}
-                    </h3>
-                    <p className="text-xs opacity-80 font-mono">
-                      {lastOutcome.escaped
-                        ? `Relativistic boost unlocked ${multiplier.toFixed(2)}x payout (+${(
-                            Number(lastOutcome.payout) / 1e18
-                          ).toFixed(4)} ETH)`
-                        : 'Probe crossed the event horizon; hull collapsed at periapsis.'}
-                    </p>
+              <div className="absolute top-3 right-3 text-right font-mono pointer-events-none">
+                <div className="text-[10px] text-gray-400">TOUR VALUE</div>
+                <div key={`v-${survived.length}`} className="text-3xl font-black text-emerald-300 animate-pop">
+                  {mult(routeMultiplier(survived))}
+                </div>
+                {round && survived.length > 0 && (
+                  <div className="text-[11px] text-amber-300">
+                    bank {fmt(cashValue)} {symbol}
+                  </div>
+                )}
+              </div>
+              {outcome && (
+                <div className="absolute inset-x-0 bottom-4 flex justify-center pointer-events-none">
+                  <div key={`o-${sceneKey}`} className={`px-4 py-2 rounded-lg border font-mono text-center animate-pop ${toneClass[outcome.tone as keyof typeof toneClass]}`}>
+                    <div className="text-sm font-black tracking-wider">{outcome.title}</div>
+                    <div className="text-xs opacity-90">{outcome.body}</div>
                   </div>
                 </div>
-                <div className="text-right font-mono text-xs">
-                  <div>ROLL: {lastOutcome.rollBps} BPS</div>
-                  <div>GATE: &lt; {lastOutcome.riskRatingBps} BPS</div>
+              )}
+              {tour?.status === TourStatus.BURNING && (
+                <div className="absolute inset-x-0 bottom-4 text-center font-mono text-xs text-cyan-300 animate-pulse pointer-events-none">
+                  PERIAPSIS PASS: VRF RESOLVING
                 </div>
+              )}
+            </div>
+            <RouteStrip tour={tour} />
+          </div>
+
+          {/* Flight computer */}
+          <div className="lg:col-span-5 flex flex-col gap-4">
+            {inTour && round && tour ? (
+              <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
+                {round.busy === 'opening' || tour.status === TourStatus.BURNING ? (
+                  <div className="py-6 text-center font-mono text-sm text-cyan-300">
+                    <Rocket className="w-6 h-6 mx-auto mb-2 animate-bounce" />
+                    {round.busy === 'opening' ? 'Confirm the launch in your wallet...' : `Slingshotting around ${BODIES[tour.route[tour.legs - 1]].name}...`}
+                    <div className="text-xs text-gray-500 mt-1">{pct(BODIES[tour.route[tour.legs - 1]].surviveBps)} chance to survive this assist</div>
+                  </div>
+                ) : tour.status === TourStatus.CRUISING ? (
+                  <>
+                    <div className="flex items-center gap-2 text-emerald-300 font-mono text-sm">
+                      <CheckCircle2 className="w-4 h-4" /> Assist {survived.length} survived. Tour value {mult(routeMultiplier(survived))}
+                    </div>
+                    <button
+                      onClick={() => void eject()}
+                      disabled={round.busy !== null}
+                      className="w-full py-3 rounded-xl font-black font-mono tracking-wider bg-gradient-to-r from-amber-400 to-yellow-300 text-black hover:brightness-110 disabled:opacity-50"
+                    >
+                      {round.busy === 'eject' ? 'EJECTING...' : `EJECT: BANK ${fmt(cashValue)} ${symbol}`}
+                      <span className="block text-[10px] font-normal opacity-70">press E</span>
+                    </button>
+                    <div className="text-xs font-mono text-gray-400 uppercase">
+                      or burn onward {tour.legs < MAX_LEGS ? `(leg ${tour.legs + 1} of ${MAX_LEGS})` : ''}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {BODIES.map(b => {
+                        const allowed = nextBodies.includes(b.id);
+                        const nextValue = tourPayout(round.wager, [...survived, b.id]);
+                        return (
+                          <button
+                            key={b.id}
+                            disabled={!allowed || round.busy !== null}
+                            onClick={() => void launch(b.id)}
+                            className={`rounded-lg border p-2 text-left font-mono transition-all ${
+                              allowed ? `${BODY_STYLE[b.id].ring} hover:scale-[1.03]` : 'border-gray-800 opacity-40 cursor-not-allowed'
+                            }`}
+                          >
+                            <div className={`flex items-center gap-1.5 text-xs font-bold ${BODY_STYLE[b.id].text}`}>
+                              <BodyDot body={b.id} size="w-3 h-3" /> {b.name}
+                            </div>
+                            {allowed ? (
+                              <>
+                                <div className="text-[10px] text-gray-400 mt-1">
+                                  {pct(b.surviveBps)} / {b.multLabel}
+                                </div>
+                                <div className="text-[11px] text-emerald-300">{mult(routeMultiplier([...survived, b.id]))}</div>
+                                <div className="text-[10px] text-gray-500">
+                                  bank {fmt(nextValue)}
+                                </div>
+                                <div className="text-[9px] text-gray-600">key {b.id + 1}</div>
+                              </>
+                            ) : (
+                              <div className="text-[10px] text-gray-500 mt-1">just left it</div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="py-6 text-center font-mono text-sm text-gray-400">Settling on-chain...</div>
+                )}
+              </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
+                <div className="text-xs font-mono text-gray-400 uppercase">First assist</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {BODIES.map(b => (
+                    <button
+                      key={b.id}
+                      onClick={() => pickBody(b.id)}
+                      className={`rounded-lg border p-2.5 text-left font-mono transition-all ${
+                        selected === b.id ? `${BODY_STYLE[b.id].ring} ring-1 ring-offset-0 ring-white/20` : 'border-gray-800 hover:border-gray-600'
+                      }`}
+                    >
+                      <div className={`flex items-center gap-1.5 text-sm font-bold ${BODY_STYLE[b.id].text}`}>
+                        <BodyDot body={b.id} /> {b.name}
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-1">{pct(b.surviveBps)} survive</div>
+                      <div className="text-[11px] text-emerald-300">{b.multLabel} per assist</div>
+                      <div className="text-[9px] text-gray-600">key {b.id + 1}</div>
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[11px] font-mono text-gray-500">
+                  Best possible tour from {BODIES[selected].name}: {mult(maxPayoutMultiplier(selected))} paid.
+                </div>
+
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-gray-400 uppercase">Wager {symbol}</span>
+                  {balance !== undefined && (
+                    <span className="text-gray-500">
+                      balance {fmt(balance)} {symbol}
+                    </span>
+                  )}
+                </div>
+                <input
+                  value={wagerInput}
+                  onChange={e => setWagerInput(e.target.value)}
+                  inputMode="decimal"
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-cyan-500"
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {WAGER_PRESETS.map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setWagerInput(v)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono border ${
+                        wagerInput === v ? 'bg-cyan-950 border-cyan-500 text-cyan-300' : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                  {maxWager !== undefined && (
+                    <button
+                      onClick={() => setWagerInput(formatUnits(balance !== undefined && balance < maxWager ? balance : maxWager, decimals))}
+                      className="px-2.5 py-1 rounded text-xs font-mono border bg-gray-800 border-gray-700 text-gray-300 hover:text-white"
+                    >
+                      MAX
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  onClick={doLaunch}
+                  disabled={launchBlocker !== null}
+                  className="w-full py-3.5 rounded-xl font-black font-mono tracking-wider flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-black disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Rocket className="w-5 h-5" />
+                  {launchBlocker ?? `LAUNCH TO ${BODIES[selected].name.toUpperCase()}`}
+                </button>
+                {round?.revealed && (
+                  <div className="text-[11px] text-center font-mono text-gray-500">Last tour logged below. Pick a body to plan the next one.</div>
+                )}
               </div>
             )}
-          </div>
 
-          {/* Right: Flight Computer Cockpit */}
-          <div className="lg:col-span-5 flex flex-col gap-4">
-            {/* Metric Displays */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-gray-900 border border-gray-800">
-                <span className="text-[11px] font-mono text-gray-400 uppercase">Payout Multiplier</span>
-                <div className="text-2xl font-black text-cyan-400 font-mono tracking-tight mt-0.5">
-                  {multiplier.toFixed(2)}x
-                </div>
-                <div className="text-[10px] text-gray-500 font-mono">Theoretical 98.00% RTP</div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-gray-900 border border-gray-800">
-                <span className="text-[11px] font-mono text-gray-400 uppercase">Win Probability</span>
-                <div className="text-2xl font-black text-emerald-400 font-mono tracking-tight mt-0.5">
-                  {winProbability}%
-                </div>
-                <div className="text-[10px] text-gray-500 font-mono">Escape Corridor</div>
-              </div>
+            <div className="p-3 rounded-xl bg-gray-900/60 border border-gray-800 text-[11px] font-mono text-gray-400 flex items-start gap-2">
+              <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+              <span>
+                Every route returns 98% on average, so route choice only sets your risk. Zig-zag the Moon for steady wins, or fly Pulsar, Jupiter, Pulsar, Jupiter for {mult(62.72)} (1 in 64).
+              </span>
             </div>
-
-            {/* Continuous Risk Slider */}
-            <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-gray-400 uppercase">Periapsis Risk Calibrator</span>
-                <span className="text-cyan-400 font-bold">{riskRatingBps} BPS</span>
-              </div>
-
-              <input
-                type="range"
-                min="100"
-                max="9800"
-                step="50"
-                value={riskRatingBps}
-                onChange={handleSliderChange}
-                className="w-full accent-cyan-400 cursor-pointer h-2 bg-gray-800 rounded-lg appearance-none"
-              />
-
-              <div className="flex justify-between text-[10px] font-mono text-gray-500">
-                <span>1.00% (98.00x)</span>
-                <span>50.00% (1.96x)</span>
-                <span>98.00% (1.00x)</span>
-              </div>
-
-              {/* Quick Presets */}
-              <div className="grid grid-cols-5 gap-1.5 mt-1">
-                {RISK_PRESETS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    onClick={() => applyPreset(preset.riskRatingBps)}
-                    className={`py-1.5 px-1 rounded text-center border font-mono transition-all ${
-                      riskRatingBps === preset.riskRatingBps
-                        ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300'
-                        : 'bg-gray-800/60 border-gray-700/60 text-gray-400 hover:text-gray-200'
-                    }`}
-                  >
-                    <div className="text-[10px] font-bold truncate">{preset.label}</div>
-                    <div className={`text-[9px] ${preset.color}`}>{preset.multiplier}x</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Wager Controls */}
-            <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-gray-400 uppercase">Wager (ETH)</span>
-                <span className="text-gray-400">
-                  Potential Payout: <strong className="text-emerald-400">{potentialPayoutEth} ETH</strong>
-                </span>
-              </div>
-
-              <div className="relative">
-                <input
-                  type="text"
-                  value={wagerEth}
-                  onChange={(e) => setWagerEth(e.target.value)}
-                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-cyan-500"
-                  placeholder="0.01"
-                />
-                <span className="absolute right-3 top-2 text-xs font-mono text-gray-500">ETH</span>
-              </div>
-
-              {/* Quick Chip Buttons */}
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {['0.001', '0.005', '0.01', '0.05', '0.1'].map((amount) => (
-                  <button
-                    key={amount}
-                    onClick={() => setWagerEth(amount)}
-                    className={`px-2.5 py-1 rounded text-xs font-mono border transition-all ${
-                      wagerEth === amount
-                        ? 'bg-cyan-950 border-cyan-500 text-cyan-400'
-                        : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white'
-                    }`}
-                  >
-                    {amount}
-                  </button>
-                ))}
-                <button
-                  onClick={() => {
-                    const current = parseFloat(wagerEth) || 0;
-                    setWagerEth((current * 2).toFixed(4));
-                  }}
-                  className="px-2.5 py-1 rounded text-xs font-mono bg-gray-800 border border-gray-700 text-gray-300 hover:text-white"
-                >
-                  2x
-                </button>
-                <button
-                  onClick={() => {
-                    const current = parseFloat(wagerEth) || 0;
-                    setWagerEth(Math.max(0.0001, current / 2).toFixed(4));
-                  }}
-                  className="px-2.5 py-1 rounded text-xs font-mono bg-gray-800 border border-gray-700 text-gray-300 hover:text-white"
-                >
-                  1/2
-                </button>
-              </div>
-            </div>
-
-            {/* Launch Action Button */}
-            <button
-              onClick={handleLaunch}
-              disabled={phase === 'launching' || wagerWei === 0n}
-              className={`w-full py-3.5 px-6 rounded-xl font-bold font-mono tracking-wider transition-all flex items-center justify-center gap-2 shadow-xl ${
-                phase === 'launching'
-                  ? 'bg-cyan-950 text-cyan-500 border border-cyan-800 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-black shadow-cyan-500/20 active:scale-[0.98]'
-              }`}
-            >
-              <Rocket className={`w-5 h-5 ${phase === 'launching' ? 'animate-bounce' : ''}`} />
-              <span>{phase === 'launching' ? 'ENGAGING ORBITAL BURN...' : 'IGNITE GRAVITY SLINGSHOT'}</span>
-            </button>
           </div>
         </div>
 
-        {/* Flight Telemetry & History */}
-        <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
-          <div className="flex items-center justify-between text-xs font-mono text-gray-400">
-            <span className="flex items-center gap-2">
-              <History className="w-4 h-4 text-cyan-400" /> RECENT FLIGHT TELEMETRY
-            </span>
-            <span>{history.length} MISSIONS LOGGED</span>
-          </div>
-
-          {history.length === 0 ? (
-            <div className="py-6 text-center text-xs text-gray-500 font-mono">
-              No orbital flights recorded yet. Calibrate periapsis and launch your first probe.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead>
-                  <tr className="border-b border-gray-800 text-gray-500">
-                    <th className="py-2 px-3">TIME</th>
-                    <th className="py-2 px-3">TARGET</th>
-                    <th className="py-2 px-3">RISK BPS</th>
-                    <th className="py-2 px-3">ROLL</th>
-                    <th className="py-2 px-3">RESULT</th>
-                    <th className="py-2 px-3 text-right">PAYOUT</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800/60">
-                  {history.map((rec) => (
-                    <tr key={rec.id} className="hover:bg-gray-800/30">
-                      <td className="py-2 px-3 text-gray-400">{rec.timestamp}</td>
-                      <td className="py-2 px-3 uppercase text-gray-300">{rec.celestial}</td>
-                      <td className="py-2 px-3 text-cyan-400">{rec.riskRatingBps}</td>
-                      <td className="py-2 px-3 text-gray-300">{rec.rollBps}</td>
-                      <td className="py-2 px-3">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            rec.escaped
-                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                              : 'bg-red-950 text-red-400 border border-red-800'
-                          }`}
-                        >
-                          {rec.escaped ? `ESCAPED (${rec.multiplier}x)` : 'CAPTURED'}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 text-right font-bold text-white">
-                        {rec.payoutEth} ETH
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <HistoryTable history={history} fmt={fmt} symbol={symbol} />
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-900 bg-gray-950 py-4 text-center text-xs font-mono text-gray-500">
-        Chain Jam Vol. 1 Entry · Powered by Chain Casino SDK · Verified Provably Fair Rejection Sampling
+      <footer className="border-t border-gray-900 py-4 text-center text-xs font-mono text-gray-500">
+        Chain Jam Vol. 1 | ICasinoGameV2 multi-step session | Chain VRF per leg | 98.00% RTP on every strategy
       </footer>
     </div>
+  );
+}
+
+function HistoryTable({ history, fmt, symbol }: { history: HistoryEntry[]; fmt: (v: bigint) => string; symbol: string }) {
+  const label = (h: HistoryEntry) =>
+    h.status === TourStatus.COMPLETE ? 'GRAND TOUR' : h.status === TourStatus.EJECTED ? 'BANKED' : h.status === TourStatus.CAPTURED ? 'CAPTURED' : 'ENDED';
+  return (
+    <section className="p-4 rounded-xl bg-gray-900 border border-gray-800">
+      <div className="flex items-center gap-2 text-xs font-mono text-gray-400 mb-2">
+        <History className="w-4 h-4 text-cyan-400" /> FLIGHT LOG
+      </div>
+      {history.length === 0 ? (
+        <div className="py-4 text-center text-xs text-gray-500 font-mono">No tours flown yet.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs font-mono">
+            <thead>
+              <tr className="border-b border-gray-800 text-gray-500">
+                <th className="py-2 px-2">ROUTE</th>
+                <th className="py-2 px-2">RESULT</th>
+                <th className="py-2 px-2 text-right">WAGER</th>
+                <th className="py-2 px-2 text-right">PAYOUT</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/60">
+              {history.map(h => (
+                <tr key={h.key}>
+                  <td className="py-2 px-2">
+                    <span className="flex items-center gap-1">
+                      {h.route.map((b, i) => (
+                        <BodyDot key={i} body={b} size="w-3 h-3" />
+                      ))}
+                    </span>
+                  </td>
+                  <td className={`py-2 px-2 font-bold ${h.payout > 0n ? 'text-emerald-400' : 'text-red-400'}`}>{label(h)}</td>
+                  <td className="py-2 px-2 text-right text-gray-400">
+                    {fmt(h.wager)} {symbol}
+                  </td>
+                  <td className="py-2 px-2 text-right text-white">
+                    {fmt(h.payout)} {symbol}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
