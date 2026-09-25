@@ -141,8 +141,10 @@ export default function App() {
     } else {
       // Standalone simulation mode with rejection sampling
       setTimeout(() => {
-        // Roll in [0, 9999]
-        const rollBps = Math.floor(Math.random() * 10000);
+        // Roll in [0, 9999] using the Web Crypto CSPRNG, not Math.random()
+        const rollBuf = new Uint32Array(1);
+        crypto.getRandomValues(rollBuf);
+        const rollBps = rollBuf[0] % 10000;
         const escaped = rollBps < riskRatingBps;
         const payout = escaped ? calculateSlingshotPayout(wagerWei, riskRatingBps) : 0n;
 
