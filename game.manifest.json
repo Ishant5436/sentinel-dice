@@ -6,7 +6,7 @@
   "locales": {
     "en": {
       "name": "Gravity Slingshot",
-      "description": "Novel astrodynamic orbital mechanics casino game on Base. Execute gravitational assists around cosmic singularities with 98.00% provably fair RTP."
+      "description": "Gravity Slingshot: Grand Tour. Fly a probe through up to four gravity assists around the Moon, Jupiter and a Pulsar, with fresh VRF randomness every leg. Bank your tour value between assists or burn onward; every route pays 98.00% RTP."
     }
   },
   "presentation": {
@@ -19,8 +19,8 @@
   },
   "capabilities": {
     "openSession": true,
-    "submitAction": false,
-    "forfeitExpiredSession": false,
+    "submitAction": true,
+    "forfeitExpiredSession": true,
     "cancelStuckRandomness": false,
     "resize": true
   }
