@@ -8,7 +8,7 @@
 - **Repository:** https://github.com/Ishant5436/sentinel-dice
 - **Live Deployment:** https://ishant5436.github.io/sentinel-dice/
 - **License:** MIT License
-- **Official Jam Submission ID:** `j577fmrzfk3t56fqmavn612nax8f2pgz` (Status: `ACCEPTED` at https://jam.chain.wtf/#submit)
+- **Official Jam Submission ID:** `j575wnny754wyx8rw99fkp3d2x8f5yhn` (Status: `ACCEPTED` at https://jam.chain.wtf/#submit)
 - **DoraHacks BUIDL Profile:** #49107 (SentinelDice Protocol)
 
 ---
