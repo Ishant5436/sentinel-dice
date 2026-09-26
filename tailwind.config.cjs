@@ -6,6 +6,10 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        display: ['Michroma', 'ui-sans-serif', 'sans-serif'],
+        ui: ['"Chakra Petch"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
       // "Event Horizon" interface palette. The game canvas keeps its own colors.
       colors: {
         hull: {

@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@chain/casino-sdk": "link:/tmp/casino-sdk/casino-sdk",
+    "@fontsource/chakra-petch": "^5.3.0",
+    "@fontsource/michroma": "^5.3.0",
     "lucide-react": "^1.16.0",
     "penpal": "^7.0.4",
     "react": "^19.0.0",
