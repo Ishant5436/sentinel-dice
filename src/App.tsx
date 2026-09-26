@@ -472,7 +472,15 @@ export default function App() {
   // Keyboard: 1-4 pick or burn a body, E ejects, Enter launches.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || helpOpen || careerOpen || titleOpen) return;
+      if (e.key === 'Escape' && (careerOpen || helpOpen)) {
+        setCareerOpen(false);
+        setHelpOpen(false);
+        return;
+      }
+      // Never hijack keys meant for a focused control: Enter/Space must press that button, not launch a tour.
+      const el = e.target instanceof Element ? e.target : null;
+      const interactive = el?.closest('input, textarea, select, button, a[href], [role="button"], [contenteditable="true"]');
+      if (interactive || helpOpen || careerOpen || titleOpen) return;
       const n = Number(e.key);
       const key = e.key.toLowerCase();
       if (n >= 1 && n <= BODIES.length) {
