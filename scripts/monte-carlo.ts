@@ -1,7 +1,7 @@
 // Monte Carlo RTP check for Grand Tour, driven through the same state machine the UI uses.
 // Run: node scripts/monte-carlo.ts [roundsPerStrategy]
 // The exact proof lives in test/GravitySlingshot.test.ts (all 45 strategies, integer math);
-// this is the empirical illustration that route and stopping choices never move RTP off 98%.
+// this is the empirical illustration that route and stopping choices never move RTP off 93%.
 import {
   BODIES,
   TourStatus,

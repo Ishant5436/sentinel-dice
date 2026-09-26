@@ -81,18 +81,18 @@ describe("Grand Tour through the SDK LocalCasinoHost", () => {
     expect(after.vault).to.equal(before.vault + WAGER);
   });
 
-  it("eject after one Pulsar assist pays 4 x 0.98 = 3.92x", async () => {
+  it("eject after one Pulsar assist pays 4 x 0.93 = 3.72x", async () => {
     const before = await balances();
     const opened = await open(PULSAR);
     const cruising = await vrf(opened.advanced, 0);
     expect(cruising.settled).to.equal(undefined);
     const banked = await act(cruising.advanced.session, EJECT);
-    expect(banked.settled.payout).to.equal((WAGER * 392n) / 100n);
+    expect(banked.settled.payout).to.equal((WAGER * 372n) / 100n);
     const after = await balances();
-    expect(after.player).to.equal(before.player + (WAGER * 292n) / 100n);
+    expect(after.player).to.equal(before.player + (WAGER * 272n) / 100n);
   });
 
-  it("the full grand tour pays 1003.52x, exactly the reserve the host committed", async () => {
+  it("the full grand tour pays 952.32x, exactly the reserve the host committed", async () => {
     const before = await balances();
     let step = await open(PULSAR);
     for (const next of [BLACK_HOLE, PULSAR, BLACK_HOLE]) {
@@ -101,9 +101,9 @@ describe("Grand Tour through the SDK LocalCasinoHost", () => {
     }
     const done = await vrf(step.advanced, 0);
     expect(done.settled.phase).to.equal(Phase.SETTLED);
-    expect(done.settled.payout).to.equal((WAGER * 100352n) / 100n);
+    expect(done.settled.payout).to.equal((WAGER * 95232n) / 100n);
     const after = await balances();
-    expect(after.player).to.equal(before.player + (WAGER * 100252n) / 100n);
+    expect(after.player).to.equal(before.player + (WAGER * 95132n) / 100n);
   });
 
   it("the host rejects a repeat body and keeps the session live", async () => {
@@ -116,7 +116,7 @@ describe("Grand Tour through the SDK LocalCasinoHost", () => {
       expect(err.message).to.include("GravitySlingshot__RepeatBody");
     }
     const banked = await act(cruising.advanced.session, EJECT);
-    expect(banked.settled.payout).to.equal((WAGER * 196n) / 100n);
+    expect(banked.settled.payout).to.equal((WAGER * 186n) / 100n);
   });
 
   it("an abandoned tour forfeits at 90% of the eject value, below what ejecting pays", async () => {
@@ -126,7 +126,7 @@ describe("Grand Tour through the SDK LocalCasinoHost", () => {
     await testClient.mine({ blocks: Number(ACTION_TIMEOUT_BLOCKS) + 1 });
     const forfeited = await run(await host.write.forfeitExpiredSession([cruising.advanced.session]));
     expect(forfeited.settled.phase).to.equal(Phase.FORFEITED);
-    const ejectValue = (WAGER * 196n) / 100n;
+    const ejectValue = (WAGER * 186n) / 100n;
     expect(forfeited.settled.payout).to.equal((ejectValue * 9n) / 10n);
     const after = await balances();
     expect(after.player).to.equal(before.player - WAGER + (ejectValue * 9n) / 10n);

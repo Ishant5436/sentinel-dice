@@ -67,6 +67,7 @@ class SpaceScore {
   private enabled = typeof window !== 'undefined' ? readPreference() : true;
   private playing = false;
   private intensity: Intensity = 0;
+  private volume = 1;
   private step = 0;
   private loop = 0;
   private nextStepTime = 0;
@@ -96,7 +97,7 @@ class SpaceScore {
     this.setIntensity(this.intensity);
     this.master.gain.cancelScheduledValues(ctx.currentTime);
     this.master.gain.setValueAtTime(0, ctx.currentTime);
-    this.master.gain.linearRampToValueAtTime(MASTER_LEVEL, ctx.currentTime + 2.5);
+    this.master.gain.linearRampToValueAtTime(MASTER_LEVEL * this.volume, ctx.currentTime + 2.5);
     this.timer = setInterval(this.schedule, SCHEDULE_MS);
   }
 
@@ -107,6 +108,11 @@ class SpaceScore {
     clearInterval(this.timer);
     this.master.gain.cancelScheduledValues(ctx.currentTime);
     this.master.gain.setTargetAtTime(0, ctx.currentTime, 0.25);
+  }
+
+  setVolume(volume: number) {
+    this.volume = volume;
+    if (this.ctx && this.playing) this.master.gain.setTargetAtTime(MASTER_LEVEL * volume, this.ctx.currentTime, 0.1);
   }
 
   setIntensity(level: Intensity) {
@@ -123,8 +129,8 @@ class SpaceScore {
     if (kind === 'capture') {
       this.master.gain.cancelScheduledValues(t);
       this.master.gain.setValueAtTime(this.master.gain.value, t);
-      this.master.gain.linearRampToValueAtTime(MASTER_LEVEL * 0.25, t + 0.15);
-      this.master.gain.linearRampToValueAtTime(MASTER_LEVEL, t + 4);
+      this.master.gain.linearRampToValueAtTime(MASTER_LEVEL * this.volume * 0.25, t + 0.15);
+      this.master.gain.linearRampToValueAtTime(MASTER_LEVEL * this.volume, t + 4);
       this.padFilter.frequency.setValueAtTime(350, t);
       this.padFilter.frequency.setTargetAtTime(FILTER_BY_INTENSITY[this.intensity], t + 0.5, 1.2);
       return;

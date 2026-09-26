@@ -23,17 +23,17 @@ import {
  *           Black hole     12.5%      8x
  *
  *         survive * multiplier = 1 on every leg, so each leg is a fair bet and the tour
- *         value is a martingale. The 2% house edge is applied once, at settlement:
- *           payout = wager * product(leg multipliers) * 0.98
- *         Expected payout is therefore exactly 98% of the wager under ANY route or
- *         stopping rule. The top route (Pulsar, Black hole, Pulsar, Black hole) pays 1003.52x.
+ *         value is a martingale. The 7% house edge is applied once, at settlement:
+ *           payout = wager * product(leg multipliers) * 0.93
+ *         Expected payout is therefore exactly 93% of the wager under ANY route or
+ *         stopping rule. The top route (Pulsar, Black hole, Pulsar, Black hole) pays 952.32x.
  * @dev A strategy can only condition on "survived so far", so every strategy is a fixed
  *      route plus an eject point. Tests enumerate all of them through these handlers.
  */
 contract GravitySlingshot is ICasinoGameV2 {
   uint256 public constant WAD = 1e18;
   uint256 public constant BASIS_POINTS = 10_000;
-  uint256 public constant RTP_BPS = 9_800;
+  uint256 public constant RTP_BPS = 9_300; // 93% RTP, 7% house edge
   uint256 public constant MAX_REHASH_ATTEMPTS = 8;
   uint256 public constant TOUR_STATE_BYTES = 352; // 11 ABI words, see _encodeTour
 
@@ -189,7 +189,7 @@ contract GravitySlingshot is ICasinoGameV2 {
   /**
    * @dev Risk inputs, all bounded over every strategy:
    *  - maxPayout / probabilityWad: the top route. Legs are fair, so P(top) = 1 / multiplier.
-   *  - bodyVarianceScaled: variance per unit wager is 0.98^2 * (E[M^2] - 1), and for a
+   *  - bodyVarianceScaled: variance per unit wager is 0.93^2 * (E[M^2] - 1), and for a
    *    fixed route E[M^2] = product of its leg multipliers. The largest product among
    *    routes that never pay the top tier is nonTopSecondMoment(firstBody). The binary
    *    top-tier term alone already bounds the total variance.

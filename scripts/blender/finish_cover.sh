@@ -16,8 +16,8 @@ magick "$RAW" \
   -font "$TITLE_FONT" -fill '#ffab4d' -pointsize 34 -kerning 6 -annotate +62+58 'GRAVITY SLINGSHOT' \
   -font "$TITLE_FONT" -fill '#efeaff' -pointsize 118 -kerning 2 -annotate +58+92 'GRAND TOUR' \
   -font "$BODY_FONT" -fill '#b9b3da' -pointsize 25 -kerning 0 -annotate +62+222 'Four gravity assists. Bank any time.' \
-  -font "$BODY_FONT" -fill '#b9b3da' -pointsize 25 -annotate +62+254 '98% RTP on every route.' \
-  -font "$TITLE_FONT" -fill '#bf8cff' -pointsize 40 -kerning 3 -annotate +62+300 'UP TO 1003.52x' \
+  -font "$BODY_FONT" -fill '#b9b3da' -pointsize 25 -annotate +62+254 '93% RTP on every route.' \
+  -font "$TITLE_FONT" -fill '#bf8cff' -pointsize 40 -kerning 3 -annotate +62+300 'UP TO 952.32x' \
   -resize 1200x630! "$OUT"
 
 echo "wrote $OUT ($(magick identify -format '%wx%h' "$OUT"), $(wc -c < "$OUT") bytes)"

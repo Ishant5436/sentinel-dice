@@ -2,7 +2,7 @@
 
 ## Basic Information
 - **Project Name:** Gravity Slingshot Protocol
-- **Tagline:** Grand Tour: a press-your-luck route builder. Chain up to four gravity assists, bank between legs, up to 1003.52x, 98.00% RTP on every route (`ICasinoGameV2` multi-step)
+- **Tagline:** Grand Tour: a press-your-luck route builder. Chain up to four gravity assists, bank between legs, up to 952.32x, 93.00% RTP on every route (`ICasinoGameV2` multi-step)
 - **Hackathon:** Chain Jam Vol. 1 ($1,000 USDC + 25% Lifetime Revenue Share)
 - **Ecosystem:** Base Network / EVM / Chain.wtf
 - **Repository:** https://github.com/Ishant5436/sentinel-dice
@@ -22,15 +22,15 @@ The probe can never
 slingshot the body it just left. After every surviving assist the player ejects to bank the tour
 value or burns onward, and every leg draws fresh on-chain VRF randomness.
 
-Every leg is a fair bet (survive x multiplier = 1) and the 2% edge is applied once at settlement
-(`payout = wager x product x 0.98`), so the expected return is exactly **98.00% for every route and
-every eject point**. The top route pays 1003.52x (1 in 1024).
+Every leg is a fair bet (survive x multiplier = 1) and the 7% edge is applied once at settlement
+(`payout = wager x product x 0.93`), so the expected return is exactly **93.00% for every route and
+every eject point**. The top route pays 952.32x (1 in 1024).
 
 ## Technical Architecture
 
 ### 1. ICasinoGameV2 multi-step session (`contracts/GravitySlingshot.sol`)
 - `quoteCaps` / `quoteRiskParams`: reserve and risk inputs for the best route reachable from the
-  chosen first body (313.6x from the Moon up to 1003.52x from the Pulsar or Black hole). `probabilityWad` is the top route's
+  chosen first body (297.6x from the Moon up to 952.32x from the Pulsar or Black hole). `probabilityWad` is the top route's
   probability; `bodyVarianceScaled` is an upper bound over all strategies.
 - `onSessionStart`: launches leg 1 (`WAITING_RANDOMNESS`) and commits the full reserve.
 - `onRandomness`: resolves the leg by rejection-sampled roll; captured settles at 0, the fourth
@@ -48,9 +48,9 @@ loop (at most 8 attempts), then survives when `roll < 8000 / 5000 / 2500 / 1250`
 
 ### 3. Verification
 - `npm test`: 27 passing. This includes an exhaustive check of all 160 legal strategies (every route
-  x every eject point) through the contract's real step functions, asserting 98.00% expected return
+  x every eject point) through the contract's real step functions, asserting 93.00% expected return
   in exact integer arithmetic, and end-to-end runs through the casino-sdk `LocalCasinoHost`
-  (bust, eject, full 1003.52x tour, rejected repeat body, forfeit).
+  (bust, eject, full 952.32x tour, rejected repeat body, forfeit).
 - `node scripts/monte-carlo.ts`: empirical RTP per strategy, driven by the same state machine as
   the UI.
 - Played end to end in the casino-sdk local simulator (open, per-leg VRF, burn, eject, payout).

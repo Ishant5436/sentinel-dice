@@ -33,7 +33,7 @@ const STEPS = [
   },
   {
     title: 'Up to four assists',
-    text: 'Chain the right route and the Grand Tour pays up to x1003.52. Get captured and the tour is lost.',
+    text: 'Chain the right route and the Grand Tour pays up to x952.32. Get captured and the tour is lost.',
   },
 ];
 
@@ -80,7 +80,7 @@ export function HowToPlay({ open, onClose }: { open: boolean; onClose: () => voi
           ))}
         </div>
         <p className="mt-4 text-xs text-hull-400">
-          Fair by design: survive chance x multiplier is 1.00 on every leg and the 2% house edge is taken once when you bank, so every route returns 98% on average. Outcomes come from Chain's on-chain VRF.
+          Fair by design: survive chance x multiplier is 1.00 on every leg and the 7% house edge is taken once when you bank, so every route returns 93% on average. Outcomes come from Chain's on-chain VRF.
         </p>
         <button
           onClick={close}

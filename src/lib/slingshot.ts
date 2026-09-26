@@ -25,7 +25,7 @@ export const BODIES: readonly Body[] = [
 
 export const MAX_LEGS = 4;
 export const NO_BODY = 255;
-export const RTP_BPS = 9800n;
+export const RTP_BPS = 9300n; // 93% RTP, 7% house edge
 export const BASIS_POINTS = 10000n;
 export const ACTION_LAUNCH = 1;
 export const ACTION_EJECT = 2;
@@ -101,13 +101,13 @@ export function routeFraction(route: readonly number[]): [bigint, bigint] {
   );
 }
 
-/** Gross tour multiplier (before the 2% edge), for display. */
+/** Gross tour multiplier (before the 7% edge), for display. */
 export function routeMultiplier(route: readonly number[]): number {
   const [num, den] = routeFraction(route);
   return Number(num) / Number(den);
 }
 
-/** The contract's single payout function: wager * product * 0.98, one floor division. */
+/** The contract's single payout function: wager * product * 0.93, one floor division. */
 export function tourPayout(wager: bigint, route: readonly number[]): bigint {
   if (route.length === 0) return 0n;
   const [num, den] = routeFraction(route);
@@ -121,7 +121,7 @@ export function topRoute(firstBody: BodyId): BodyId[] {
   return [3, 2, 3, 2];
 }
 
-/** Worst-case payout multiplier for a tour opened on `firstBody` (313.6x up to 1003.52x). */
+/** Worst-case payout multiplier for a tour opened on `firstBody` (297.6x up to 952.32x). */
 export function maxPayoutMultiplier(firstBody: BodyId): number {
   return (routeMultiplier(topRoute(firstBody)) * Number(RTP_BPS)) / Number(BASIS_POINTS);
 }

@@ -25,6 +25,135 @@ class OrbitalAudioEngine {
     return this.ctx;
   }
 
+  private master: GainNode | null = null;
+  private volume = 1;
+  private pingTimer: ReturnType<typeof setTimeout> | undefined;
+
+  private out(ctx: AudioContext): AudioNode {
+    if (!this.master) {
+      this.master = ctx.createGain();
+      this.master.gain.value = this.volume;
+      this.master.connect(ctx.destination);
+    }
+    return this.master;
+  }
+
+  public setVolume(volume: number) {
+    this.volume = volume;
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.05);
+  }
+
+  /** Sonar pings that speed up and rise in pitch as the probe closes on periapsis. */
+  public startApproachPings(approachMs: number) {
+    this.stopPings();
+    const start = performance.now();
+    const next = () => {
+      const t = performance.now() - start;
+      if (t > approachMs + 12000) return; // never ping forever if the VRF stalls
+      const k = Math.min(1, t / approachMs);
+      this.ping(900 + 700 * k);
+      this.pingTimer = setTimeout(next, t > approachMs ? 90 : 380 - 300 * k);
+    };
+    next();
+  }
+
+  public stopPings() {
+    clearTimeout(this.pingTimer);
+    this.pingTimer = undefined;
+  }
+
+  private ping(freq: number) {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0.035, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.09);
+    osc.connect(gain);
+    gain.connect(this.out(ctx));
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1);
+  }
+
+  private noiseBurst(ctx: AudioContext, seconds: number): AudioBufferSourceNode {
+    const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    return src;
+  }
+
+  /** Slingshot survived: resonant high-pass sweep on noise plus a rising chirp. */
+  public playSonicBoom() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    try {
+      const t = ctx.currentTime;
+      const noise = this.noiseBurst(ctx, 0.45);
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.Q.value = 9;
+      hp.frequency.setValueAtTime(500, t);
+      hp.frequency.exponentialRampToValueAtTime(9000, t + 0.35);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+      noise.connect(hp);
+      hp.connect(gain);
+      gain.connect(this.out(ctx));
+      noise.start(t);
+      const chirp = ctx.createOscillator();
+      const chirpGain = ctx.createGain();
+      chirp.type = "sine";
+      chirp.frequency.setValueAtTime(280, t);
+      chirp.frequency.exponentialRampToValueAtTime(1600, t + 0.25);
+      chirpGain.gain.setValueAtTime(0.06, t);
+      chirpGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      chirp.connect(chirpGain);
+      chirpGain.connect(this.out(ctx));
+      chirp.start(t);
+      chirp.stop(t + 0.32);
+    } catch (err: unknown) {
+      console.warn("Sonic boom audio bypassed:", err);
+    }
+  }
+
+  /** Captured: sub-bass drop from 80 Hz to 28 Hz with a low noise burst. */
+  public playCaptureCollapse() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    try {
+      const t = ctx.currentTime;
+      const sub = ctx.createOscillator();
+      const subGain = ctx.createGain();
+      sub.type = "sine";
+      sub.frequency.setValueAtTime(80, t);
+      sub.frequency.exponentialRampToValueAtTime(28, t + 1.2);
+      subGain.gain.setValueAtTime(0.28, t);
+      subGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+      sub.connect(subGain);
+      subGain.connect(this.out(ctx));
+      sub.start(t);
+      sub.stop(t + 1.35);
+      const noise = this.noiseBurst(ctx, 0.5);
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 400;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+      noise.connect(lp);
+      lp.connect(gain);
+      gain.connect(this.out(ctx));
+      noise.start(t);
+    } catch (err: unknown) {
+      console.warn("Capture collapse audio bypassed:", err);
+    }
+  }
+
   public setMuted(muted: boolean) {
     this.isMuted = muted;
   }
@@ -51,7 +180,7 @@ class OrbitalAudioEngine {
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(this.out(ctx));
 
       osc.start();
       osc.stop(ctx.currentTime + 0.06);
@@ -80,7 +209,7 @@ class OrbitalAudioEngine {
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(this.out(ctx));
 
       osc.start();
       osc.stop(ctx.currentTime + 1.5);
@@ -108,7 +237,7 @@ class OrbitalAudioEngine {
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.95);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(this.out(ctx));
 
       osc.start();
       osc.stop(ctx.currentTime + 0.95);
@@ -137,7 +266,7 @@ class OrbitalAudioEngine {
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8 + idx * 0.05);
 
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(this.out(ctx));
 
         osc.start(ctx.currentTime + idx * 0.04);
         osc.stop(ctx.currentTime + 0.8 + idx * 0.05);
@@ -166,7 +295,7 @@ class OrbitalAudioEngine {
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.75);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(this.out(ctx));
 
       osc.start();
       osc.stop(ctx.currentTime + 0.75);

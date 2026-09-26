@@ -85,7 +85,7 @@ function IconButton({ title, active = true, onClick, children }: { title: string
       title={title}
       aria-label={title}
       aria-pressed={active}
-      className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-colors ${
+      className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center transition-colors ${
         active ? 'bg-hull-800 border-hull-600 text-flare-300 hover:bg-hull-700' : 'bg-hull-900 border-hull-700 text-hull-600 hover:text-hull-300'
       }`}
     >
@@ -337,12 +337,12 @@ export default function App() {
     <div className="relative flex flex-col bg-hull-950 text-hull-100 font-ui overflow-hidden" style={{ height: rootHeight }}>
       <header className="h-14 shrink-0 flex items-center justify-between gap-2 px-3 sm:px-5 border-b border-hull-800 bg-hull-900/80 backdrop-blur-md z-10">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 shrink-0 rounded-lg bg-gradient-to-tr from-nebula-600 to-flare-500 flex items-center justify-center shadow-lg shadow-nebula-600/30">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 shrink-0 rounded-lg bg-gradient-to-tr from-nebula-600 to-flare-500 flex items-center justify-center shadow-lg shadow-nebula-600/30">
             <Orbit className="w-5 h-5 text-hull-950" />
           </div>
           <div className="leading-tight min-w-0">
             <div className="text-[9px] tracking-[0.35em] text-flare-400 truncate">GRAVITY SLINGSHOT</div>
-            <div className="font-display text-sm sm:text-base text-hull-100 truncate">GRAND TOUR</div>
+            <div className="font-display text-[11px] sm:text-base text-hull-100 whitespace-nowrap">GRAND TOUR</div>
           </div>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2">
@@ -351,7 +351,7 @@ export default function App() {
             {hostApi ? 'ON-CHAIN' : 'DEMO'}
           </div>
           {balance !== undefined && (
-            <div className="flex items-baseline gap-1.5 px-3 py-1.5 rounded-lg bg-hull-850 border border-hull-700">
+            <div className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg bg-hull-850 border border-hull-700">
               <span className="hidden sm:inline text-[9px] tracking-widest text-hull-400">BALANCE</span>
               <span className="font-semibold tabular-nums text-sm">{fmt(balance)}</span>
               <span className="text-[10px] text-flare-300">{symbol}</span>
@@ -558,7 +558,7 @@ export default function App() {
 
             <FlightLog history={history} fmt={fmt} symbol={symbol} />
             <p className="text-[10px] leading-relaxed text-hull-600">
-              Every route returns 98% on average, so your route only sets the risk. Top route: Pulsar, Black hole, Pulsar, Black hole for {mult(TOP_PAYOUT)} (1 in 1024).
+              Every route returns 93% on average, so your route only sets the risk. Top route: Pulsar, Black hole, Pulsar, Black hole for {mult(TOP_PAYOUT)} (1 in 1024).
             </p>
           </div>
         </aside>

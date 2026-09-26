@@ -80,7 +80,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   }
   const expectedPayout = (route: number[]) => {
     const [num, den] = routeFraction(route);
-    return (WAGER * num * 9800n) / (den * 10000n);
+    return (WAGER * num * 9300n) / (den * 10000n);
   };
 
   // Every legal route: any first body, then never the same body twice in a row.
@@ -127,10 +127,10 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   describe("paytable and quotes", () => {
     it("reserves exactly the top route reachable from each first body", async () => {
       const cases = [
-        { body: MOON, payout: 313_600_000_000_000_000_000n }, // 320x * 0.98
-        { body: JUPITER, payout: 501_760_000_000_000_000_000n }, // 512x * 0.98
-        { body: PULSAR, payout: 1_003_520_000_000_000_000_000n }, // 1024x * 0.98
-        { body: BLACK_HOLE, payout: 1_003_520_000_000_000_000_000n },
+        { body: MOON, payout: 297_600_000_000_000_000_000n }, // 320x * 0.93
+        { body: JUPITER, payout: 476_160_000_000_000_000_000n }, // 512x * 0.93
+        { body: PULSAR, payout: 952_320_000_000_000_000_000n }, // 1024x * 0.93
+        { body: BLACK_HOLE, payout: 952_320_000_000_000_000_000n },
       ];
       for (const { body, payout } of cases) {
         const [escrow, reserve] = await game.read.quoteCaps([WAGER, gameData(body)]);
@@ -139,7 +139,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
       }
     });
 
-    it("quotes risk params: top-tier probability, 98% mean, strategy-bounded body variance", async () => {
+    it("quotes risk params: top-tier probability, 93% mean, strategy-bounded body variance", async () => {
       const cases = [
         { body: MOON, prob: 3_125_000_000_000_000n, secondMoment: 160n }, // 1/320
         { body: JUPITER, prob: 1_953_125_000_000_000n, secondMoment: 256n }, // 1/512
@@ -154,8 +154,8 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
         const [, reserve] = await game.read.quoteCaps([WAGER, gameData(body)]);
         expect(maxPayout).to.equal(WAGER + reserve);
         expect(probabilityWad).to.equal(prob);
-        expect(expected).to.equal((WAGER * 98n) / 100n);
-        const perUnitWad = (9800n * 9800n * (secondMoment - 1n) * 10n ** 18n) / 10n ** 8n;
+        expect(expected).to.equal((WAGER * 93n) / 100n);
+        const perUnitWad = (9300n * 9300n * (secondMoment - 1n) * 10n ** 18n) / 10n ** 8n;
         expect(bodyVar).to.equal(WAGER * WAGER * perUnitWad);
       }
     });
@@ -245,7 +245,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
       const route = [PULSAR, BLACK_HOLE, PULSAR, BLACK_HOLE];
       const { settle, reserve } = await flyAndBank(route);
       expect(settle.nextPhase).to.equal(Phase.SETTLED);
-      expect(settle.payout).to.equal(WAGER + reserve); // 1003.52x, no slack and no overflow
+      expect(settle.payout).to.equal(WAGER + reserve); // 952.32x, no slack and no overflow
       expect(decodeTour(settle.newGameState).status).to.equal(Status.COMPLETE);
     });
   });
@@ -257,7 +257,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
       expect(routes.length).to.equal(4 + 12 + 36 + 108);
     });
 
-    it("pays exactly 98.00% expected return for every strategy, within the reserve", async () => {
+    it("pays exactly 93.00% expected return for every strategy, within the reserve", async () => {
       for (const route of routes) {
         const { settle, reserve } = await flyAndBank(route);
         expect(settle.payout).to.equal(expectedPayout(route));
@@ -267,7 +267,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
         // E[payout] = P(survive every leg) * payout, checked in exact integer arithmetic.
         const surviveNum = route.reduce((acc, body) => acc * SURVIVE_BPS[body], 1n);
         const scale = 10000n ** BigInt(route.length);
-        expect(settle.payout * surviveNum * 100n).to.equal(WAGER * 98n * scale);
+        expect(settle.payout * surviveNum * 100n).to.equal(WAGER * 93n * scale);
       }
     });
 
