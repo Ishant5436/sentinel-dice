@@ -7,6 +7,8 @@ export interface CanvasScene {
   key: number; // bump to start a new transition
   phase: CanvasPhase;
   body: BodyId;
+  /** Planned next target: drawn as a dotted trajectory with its prospective multiplier. */
+  preview?: { body: BodyId; label: string } | null;
 }
 
 interface Particle {
@@ -244,6 +246,8 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
     let from = { x: 0, y: 0, angle: -Math.PI / 2 };
     const probe = { x: -40, y: 0, angle: -Math.PI / 2, visible: true };
     let shake = 0;
+    let phaseSim = 0; // phase clock that can run slow (periapsis slow-motion)
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     let width = 0;
     let height = 0;
     const trail: Array<{ x: number; y: number }> = [];
@@ -267,7 +271,7 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const t = now / 1000;
-      const { key, phase, body } = sceneRef.current;
+      const { key, phase, body, preview } = sceneRef.current;
       const cx = width * 0.56;
       const cy = height * 0.5;
       const rp = PERIAPSIS[body];
@@ -277,10 +281,24 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
         prevPhase = currentPhase;
         currentPhase = phase;
         phaseStart = now;
+        phaseSim = 0;
         from = { x: probe.x, y: probe.y, angle: probe.angle };
         shake = 0;
       }
-      const elapsed = now - phaseStart;
+      // Periapsis slow-motion: time runs at 80% for 300 ms as the probe reaches closest approach,
+      // and again for the first 300 ms of the outcome, then snaps back to full speed.
+      const slowMo =
+        (phase === 'burning' && phaseSim >= APPROACH_MS - 150 && phaseSim < APPROACH_MS + 150) ||
+        ((phase === 'survived' || phase === 'captured' || phase === 'complete') && phaseSim < 300);
+      phaseSim += dt * 1000 * (slowMo ? 0.8 : 1);
+      const elapsed = phaseSim;
+      void phaseStart;
+      // Turbulence builds while holding periapsis around the Pulsar or the Black hole.
+      const heavy = body === 2 || body === 3;
+      const turbulence =
+        heavy && phase === 'burning' && !reduceMotion
+          ? (body === 3 ? 2.6 : 1.4) * (elapsed > APPROACH_MS ? 1 + Math.min(1.5, (elapsed - APPROACH_MS) / 1500) : elapsed / APPROACH_MS)
+          : 0;
 
       // Probe kinematics per phase
       probe.visible = true;
@@ -353,10 +371,10 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
       const exiting = (phase === 'survived' || phase === 'complete') && elapsed < EXIT_MS;
       const speed = phase === 'burning' ? 60 : exiting ? 420 : phase === 'survived' || phase === 'complete' ? 40 : 12;
       ctx.save();
-      if (shake > 0.1) {
-        ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-        shake *= 0.9;
-      }
+      const jolt = turbulence + (shake > 0.1 && !reduceMotion ? shake : 0);
+      if (jolt > 0) ctx.translate((Math.random() - 0.5) * jolt, (Math.random() - 0.5) * jolt);
+      if (shake > 0.1) shake *= 0.9;
+      const lensing = body === 3 && phase !== 'ejected' && !(phase === 'survived' && elapsed > EXIT_MS);
       ctx.fillStyle = '#030712';
       ctx.fillRect(-20, -20, width + 40, height + 40);
       for (const star of stars) {
@@ -365,8 +383,20 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
           star.x += 1;
           star.y = Math.random();
         }
-        const sx = star.x * width;
-        const sy = star.y * height;
+        let sx = star.x * width;
+        let sy = star.y * height;
+        if (lensing) {
+          // Gravitational lensing: starlight near the horizon is pushed outward around it.
+          const dx = sx - cx;
+          const dy = sy - cy;
+          const d = Math.hypot(dx, dy) || 1;
+          const rs = BODY_RADIUS[3];
+          if (d < rs * 7) {
+            const push = (rs * rs * 1.8) / Math.max(d, rs * 0.6);
+            sx = cx + (dx / d) * (d + push);
+            sy = cy + (dy / d) * (d + push);
+          }
+        }
         const streak = Math.max(1, (speed * star.depth) / 30);
         ctx.strokeStyle = `rgba(226, 232, 240, ${0.25 + star.depth * 0.6})`;
         ctx.lineWidth = star.depth * 1.4;
@@ -381,6 +411,13 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
       ctx.globalAlpha = coasting ? 0.35 : 1;
       drawBody(ctx, body, cx, cy, t);
       ctx.globalAlpha = 1;
+      if (lensing) {
+        ctx.strokeStyle = 'rgba(253, 186, 116, 0.12)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(cx, cy, BODY_RADIUS[3] * 1.9, 0, Math.PI * 2);
+        ctx.stroke();
+      }
 
       // Periapsis ring: the corridor the probe must hold
       if (phase === 'burning' || phase === 'idle') {
@@ -391,6 +428,39 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
         ctx.arc(cx, cy, rp, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
+      }
+
+      // Planned trajectory preview: dotted spline to the target body with its prospective multiplier.
+      if (preview && (phase === 'idle' || coasting)) {
+        const ghost = phase === 'idle' ? null : { x: width * 0.8, y: height * 0.36 };
+        const tx = ghost ? ghost.x : cx;
+        const ty = ghost ? ghost.y - PERIAPSIS[preview.body] * 0.55 : cy - rp;
+        if (ghost) {
+          ctx.save();
+          ctx.globalAlpha = 0.55;
+          ctx.translate(ghost.x, ghost.y);
+          ctx.scale(0.55, 0.55);
+          drawBody(ctx, preview.body, 0, 0, t);
+          ctx.restore();
+        }
+        ctx.save();
+        ctx.strokeStyle = 'rgba(125, 211, 252, 0.85)';
+        ctx.shadowColor = '#38bdf8';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([2, 7]);
+        ctx.lineDashOffset = -t * 30;
+        ctx.beginPath();
+        ctx.moveTo(probe.x, probe.y);
+        ctx.quadraticCurveTo((probe.x + tx) / 2, Math.min(probe.y, ty) - 60, tx, ty);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#e0f2fe';
+        ctx.font = '600 13px "Chakra Petch", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(preview.label, tx, ty - 12);
+        ctx.restore();
       }
 
       // Trail
@@ -414,8 +484,8 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
       // Particles
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
+        p.x += p.vx * dt + (turbulence ? (Math.random() - 0.5) * turbulence * 0.6 : 0);
+        p.y += p.vy * dt + (turbulence ? (Math.random() - 0.5) * turbulence * 0.6 : 0);
         p.life -= p.decay * dt;
         if (p.life <= 0) {
           particles.splice(i, 1);
