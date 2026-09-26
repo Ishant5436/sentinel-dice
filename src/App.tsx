@@ -21,11 +21,13 @@ import { orbitalAudio } from './audio/orbitalAudio';
 import { AlertTriangle, CheckCircle2, History, Orbit, Rocket, Shield, Sparkles, Volume2, VolumeX } from 'lucide-react';
 
 const BODY_STYLE: Record<BodyId, { dot: string; ring: string; text: string }> = {
-  0: { dot: 'from-slate-200 to-slate-500', ring: 'border-slate-400/60 bg-slate-500/10', text: 'text-slate-200' },
-  1: { dot: 'from-amber-200 to-orange-600', ring: 'border-amber-400/60 bg-amber-500/10', text: 'text-amber-300' },
-  2: { dot: 'from-white to-cyan-500', ring: 'border-cyan-400/60 bg-cyan-500/10', text: 'text-cyan-300' },
+  0: { dot: 'from-slate-200 to-slate-500', ring: 'border-slate-400/60 bg-slate-400/10', text: 'text-slate-200' },
+  1: { dot: 'from-amber-200 to-orange-600', ring: 'border-amber-400/60 bg-amber-400/10', text: 'text-amber-300' },
+  2: { dot: 'from-white to-sky-500', ring: 'border-sky-400/60 bg-sky-400/10', text: 'text-sky-300' },
+  3: { dot: 'from-black via-black to-flare-500', ring: 'border-nebula-400/60 bg-nebula-500/10', text: 'text-nebula-300' },
 };
 const WAGER_PRESETS = ['0.01', '0.1', '1', '10'];
+const TOP_PAYOUT = maxPayoutMultiplier(2);
 
 const pct = (bps: number) => `${bps / 100}%`;
 const mult = (x: number) => `x${x.toFixed(2)}`;
@@ -46,7 +48,8 @@ function canvasPhase(tour: Tour): CanvasPhase {
 }
 
 function BodyDot({ body, size = 'w-4 h-4' }: { body: BodyId; size?: string }) {
-  return <span className={`inline-block rounded-full bg-gradient-to-br ${BODY_STYLE[body].dot} ${size} shrink-0`} />;
+  const ring = body === 3 ? ' ring-1 ring-flare-400/70' : '';
+  return <span className={`inline-block rounded-full bg-gradient-to-br ${BODY_STYLE[body].dot} ${size} shrink-0${ring}`} />;
 }
 
 function RouteStrip({ tour }: { tour: Tour | null }) {
@@ -67,19 +70,19 @@ function RouteStrip({ tour }: { tour: Tour | null }) {
             title={body !== undefined && !inFlight ? `roll ${roll} vs gate < ${BODIES[body].surviveBps}` : undefined}
             className={`rounded-lg border px-2 py-2 text-center font-mono transition-all ${
               body === undefined
-                ? 'border-dashed border-gray-700 text-gray-600'
+                ? 'border-dashed border-hull-700 text-hull-600'
                 : lost
-                  ? 'border-red-500/60 bg-red-950/40 text-red-300'
+                  ? 'border-ember-400/60 bg-ember-400/10 text-ember-300'
                   : inFlight
-                    ? 'border-cyan-400/70 bg-cyan-950/40 text-cyan-200 animate-pulse'
-                    : 'border-emerald-500/50 bg-emerald-950/30 text-emerald-300'
+                    ? 'border-nebula-400/70 bg-nebula-500/10 text-nebula-300 animate-pulse'
+                    : 'border-mint-400/50 bg-mint-400/10 text-mint-300'
             }`}
           >
-            <div className="text-[10px] text-gray-500">LEG {leg + 1}</div>
+            <div className="text-[10px] text-hull-400">LEG {leg + 1}</div>
             {body === undefined ? (
               <div className="text-sm py-0.5">?</div>
             ) : (
-              <div className="flex items-center justify-center gap-1.5 text-xs font-bold py-0.5">
+              <div className="flex items-center justify-center gap-1.5 text-xs font-bold py-0.5 truncate">
                 <BodyDot body={body} size="w-3 h-3" />
                 {BODIES[body].name}
               </div>
@@ -182,19 +185,19 @@ export default function App() {
     if (inTour) return;
     if (round?.revealed) reset();
     setSelected(body);
-    orbitalAudio.playBlip(500 + body * 220);
+    orbitalAudio.playBlip(500 + body * 180);
   };
   const doLaunch = () => {
     if (inTour || launchBlocker || wager === null) return;
     void start(selected, wager);
   };
 
-  // Keyboard: 1-3 pick or burn a body, E ejects, Enter launches.
+  // Keyboard: 1-4 pick or burn a body, E ejects, Enter launches.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
       const n = Number(e.key);
-      if (n >= 1 && n <= 3) {
+      if (n >= 1 && n <= BODIES.length) {
         const body = (n - 1) as BodyId;
         if (inTour) {
           if (nextBodies.includes(body)) void launch(body);
@@ -208,24 +211,24 @@ export default function App() {
 
   const outcome = round && (isTerminalTour(round.shown) || round.aborted) ? outcomeLine(round, fmt, symbol) : null;
   const toneClass = {
-    gold: 'border-amber-400/60 bg-amber-950/40 text-amber-200',
-    red: 'border-red-500/50 bg-red-950/40 text-red-300',
-    amber: 'border-amber-600/50 bg-amber-950/30 text-amber-300',
+    gold: 'border-flare-400/60 bg-hull-950/80 text-flare-200',
+    red: 'border-ember-400/60 bg-hull-950/80 text-ember-300',
+    amber: 'border-flare-600/60 bg-hull-950/80 text-flare-300',
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans">
-      <header className="border-b border-gray-800 bg-gray-900/60 backdrop-blur-md">
+    <div className="min-h-screen bg-hull-950 text-hull-100 flex flex-col font-sans">
+      <header className="border-b border-hull-800 bg-hull-900/70 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-emerald-400 flex items-center justify-center border border-cyan-400/40">
-              <Orbit className="w-6 h-6 text-black" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-nebula-600 to-flare-500 flex items-center justify-center border border-flare-400/40 shadow-lg shadow-nebula-600/30">
+              <Orbit className="w-6 h-6 text-hull-950" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-wider text-white">
-                GRAVITY SLINGSHOT <span className="text-cyan-400">GRAND TOUR</span>
+              <h1 className="text-lg font-bold tracking-wider text-hull-100">
+                GRAVITY SLINGSHOT <span className="text-flare-400">GRAND TOUR</span>
               </h1>
-              <p className="text-xs text-gray-400 font-mono">Four gravity assists. Bank any time. 98.00% RTP on every route.</p>
+              <p className="text-xs text-hull-400 font-mono">Four gravity assists. Bank any time. 98.00% RTP on every route.</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -234,19 +237,19 @@ export default function App() {
                 setMuted(!muted);
                 orbitalAudio.setMuted(!muted);
               }}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700"
+              className="p-2 rounded-lg bg-hull-800 hover:bg-hull-700 border border-hull-700"
               title={muted ? 'Unmute' : 'Mute'}
             >
-              {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-cyan-400" />}
+              {muted ? <VolumeX className="w-4 h-4 text-ember-400" /> : <Volume2 className="w-4 h-4 text-flare-300" />}
             </button>
             <button
               onClick={() => setShowRules(!showRules)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs font-mono border border-gray-700"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-hull-800 hover:bg-hull-700 text-xs font-mono text-hull-300 border border-hull-700"
             >
-              <Shield className="w-3.5 h-3.5 text-emerald-400" /> How it pays
+              <Shield className="w-3.5 h-3.5 text-mint-400" /> How it pays
             </button>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-xs font-mono">
-              <span className={`w-2 h-2 rounded-full ${hostApi ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-hull-900 border border-hull-700 text-xs font-mono text-hull-300">
+              <span className={`w-2 h-2 rounded-full ${hostApi ? 'bg-mint-400' : 'bg-flare-400'}`} />
               {hostApi ? 'ON-CHAIN' : 'DEMO MODE'}
             </div>
           </div>
@@ -255,39 +258,39 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto px-4 pt-5 pb-16 flex-1 flex flex-col gap-5 w-full">
         {showRules && (
-          <section className="p-4 rounded-xl bg-gray-900/90 border border-cyan-500/30 text-sm text-gray-300 grid gap-3 md:grid-cols-2">
+          <section className="p-4 rounded-xl bg-hull-900/90 border border-nebula-500/30 text-sm text-hull-300 grid gap-3 md:grid-cols-2">
             <div className="space-y-2">
-              <h2 className="font-bold text-cyan-300">The Grand Tour</h2>
+              <h2 className="font-bold text-nebula-300">The Grand Tour</h2>
               <p>Pick a body and launch. Survive the slingshot and your tour value multiplies. Then eject to bank it, or burn on to a new body. You get up to four assists, and you can never slingshot the body you just left.</p>
               <p>Every leg draws fresh on-chain VRF randomness. Rolls use rejection sampling, so there is no modulo bias.</p>
             </div>
             <div className="space-y-2">
-              <h2 className="font-bold text-emerald-300">Why it is always 98%</h2>
-              <p className="font-mono text-xs bg-black/40 rounded p-2 border border-gray-800">
-                Moon 80% x 1.25 = Jupiter 50% x 2 = Pulsar 25% x 4 = 1.00
+              <h2 className="font-bold text-flare-300">Why it is always 98%</h2>
+              <p className="font-mono text-xs bg-hull-950/70 rounded p-2 border border-hull-700 text-hull-300">
+                Moon 80% x 1.25 = Jupiter 50% x 2 = Pulsar 25% x 4 = Black hole 12.5% x 8 = 1.00
                 <br />
                 payout = wager x (leg multipliers) x 0.98
               </p>
-              <p>Every leg is a fair bet, and the 2% edge is taken once, when you bank. Whatever route you fly and whenever you eject, your expected return is exactly 98.00%. Your choices change the swing, never the edge. The contract tests check all 45 possible strategies with exact integer math.</p>
+              <p>Every leg is a fair bet, and the 2% edge is taken once, when you bank. Whatever route you fly and whenever you eject, your expected return is exactly 98.00%. Your choices change the swing, never the edge. The contract tests check all 160 possible strategies with exact integer math.</p>
             </div>
           </section>
         )}
 
         {error && (
-          <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-red-500/40 bg-red-950/40 text-red-200 text-xs font-mono">
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-ember-400/40 bg-ember-400/10 text-ember-300 text-xs font-mono">
             <span className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
             </span>
-            <button onClick={clearError} className="text-red-300 hover:text-white">
+            <button onClick={clearError} className="text-ember-300 hover:text-hull-100">
               dismiss
             </button>
           </div>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          {/* Stage */}
+          {/* Stage: the game view keeps its own colors */}
           <div className="lg:col-span-7 flex flex-col gap-3">
-            <div className="relative h-[300px] sm:h-[380px] rounded-xl overflow-hidden border border-cyan-500/20 bg-gray-950">
+            <div className="relative h-[300px] sm:h-[380px] rounded-xl overflow-hidden border border-hull-700 bg-gray-950 shadow-2xl shadow-nebula-600/10">
               <TourCanvas scene={scene} />
               <div className="absolute top-3 left-3 font-mono text-xs space-y-1 pointer-events-none">
                 <div className="text-gray-400">
@@ -331,30 +334,30 @@ export default function App() {
           {/* Flight computer */}
           <div className="lg:col-span-5 flex flex-col gap-4">
             {inTour && round && tour ? (
-              <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
+              <div className="p-4 rounded-xl bg-hull-900 border border-hull-700 flex flex-col gap-3">
                 {round.busy === 'opening' || tour.status === TourStatus.BURNING ? (
-                  <div className="py-6 text-center font-mono text-sm text-cyan-300">
-                    <Rocket className="w-6 h-6 mx-auto mb-2 animate-bounce" />
+                  <div className="py-6 text-center font-mono text-sm text-nebula-300">
+                    <Rocket className="w-6 h-6 mx-auto mb-2 animate-bounce text-flare-400" />
                     {round.busy === 'opening' ? 'Confirm the launch in your wallet...' : `Slingshotting around ${BODIES[tour.route[tour.legs - 1]].name}...`}
-                    <div className="text-xs text-gray-500 mt-1">{pct(BODIES[tour.route[tour.legs - 1]].surviveBps)} chance to survive this assist</div>
+                    <div className="text-xs text-hull-400 mt-1">{pct(BODIES[tour.route[tour.legs - 1]].surviveBps)} chance to survive this assist</div>
                   </div>
                 ) : tour.status === TourStatus.CRUISING ? (
                   <>
-                    <div className="flex items-center gap-2 text-emerald-300 font-mono text-sm">
+                    <div className="flex items-center gap-2 text-mint-300 font-mono text-sm">
                       <CheckCircle2 className="w-4 h-4" /> Assist {survived.length} survived. Tour value {mult(routeMultiplier(survived))}
                     </div>
                     <button
                       onClick={() => void eject()}
                       disabled={round.busy !== null}
-                      className="w-full py-3 rounded-xl font-black font-mono tracking-wider bg-gradient-to-r from-amber-400 to-yellow-300 text-black hover:brightness-110 disabled:opacity-50"
+                      className="w-full py-3 rounded-xl font-black font-mono tracking-wider bg-gradient-to-r from-flare-500 to-flare-300 text-hull-950 hover:brightness-110 disabled:opacity-50 shadow-lg shadow-flare-500/20"
                     >
                       {round.busy === 'eject' ? 'EJECTING...' : `EJECT: BANK ${fmt(cashValue)} ${symbol}`}
                       <span className="block text-[10px] font-normal opacity-70">press E</span>
                     </button>
-                    <div className="text-xs font-mono text-gray-400 uppercase">
+                    <div className="text-xs font-mono text-hull-400 uppercase">
                       or burn onward {tour.legs < MAX_LEGS ? `(leg ${tour.legs + 1} of ${MAX_LEGS})` : ''}
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       {BODIES.map(b => {
                         const allowed = nextBodies.includes(b.id);
                         const nextValue = tourPayout(round.wager, [...survived, b.id]);
@@ -364,64 +367,62 @@ export default function App() {
                             disabled={!allowed || round.busy !== null}
                             onClick={() => void launch(b.id)}
                             className={`rounded-lg border p-2 text-left font-mono transition-all ${
-                              allowed ? `${BODY_STYLE[b.id].ring} hover:scale-[1.03]` : 'border-gray-800 opacity-40 cursor-not-allowed'
+                              allowed ? `${BODY_STYLE[b.id].ring} hover:scale-[1.03]` : 'border-hull-800 opacity-40 cursor-not-allowed'
                             }`}
                           >
                             <div className={`flex items-center gap-1.5 text-xs font-bold ${BODY_STYLE[b.id].text}`}>
                               <BodyDot body={b.id} size="w-3 h-3" /> {b.name}
+                              <span className="ml-auto text-[9px] font-normal text-hull-600">{b.id + 1}</span>
                             </div>
                             {allowed ? (
-                              <>
-                                <div className="text-[10px] text-gray-400 mt-1">
+                              <div className="flex items-baseline justify-between mt-1">
+                                <span className="text-[10px] text-hull-400">
                                   {pct(b.surviveBps)} / {b.multLabel}
-                                </div>
-                                <div className="text-[11px] text-emerald-300">{mult(routeMultiplier([...survived, b.id]))}</div>
-                                <div className="text-[10px] text-gray-500">
-                                  bank {fmt(nextValue)}
-                                </div>
-                                <div className="text-[9px] text-gray-600">key {b.id + 1}</div>
-                              </>
+                                </span>
+                                <span className="text-[11px] text-mint-300">{mult(routeMultiplier([...survived, b.id]))}</span>
+                              </div>
                             ) : (
-                              <div className="text-[10px] text-gray-500 mt-1">just left it</div>
+                              <div className="text-[10px] text-hull-400 mt-1">just left it</div>
                             )}
+                            {allowed && <div className="text-[10px] text-hull-400">bank {fmt(nextValue)}</div>}
                           </button>
                         );
                       })}
                     </div>
                   </>
                 ) : (
-                  <div className="py-6 text-center font-mono text-sm text-gray-400">Settling on-chain...</div>
+                  <div className="py-6 text-center font-mono text-sm text-hull-400">Settling on-chain...</div>
                 )}
               </div>
             ) : (
-              <div className="p-4 rounded-xl bg-gray-900 border border-gray-800 flex flex-col gap-3">
-                <div className="text-xs font-mono text-gray-400 uppercase">First assist</div>
-                <div className="grid grid-cols-3 gap-2">
+              <div className="p-4 rounded-xl bg-hull-900 border border-hull-700 flex flex-col gap-3">
+                <div className="text-xs font-mono text-hull-400 uppercase">First assist</div>
+                <div className="grid grid-cols-2 gap-2">
                   {BODIES.map(b => (
                     <button
                       key={b.id}
                       onClick={() => pickBody(b.id)}
                       className={`rounded-lg border p-2.5 text-left font-mono transition-all ${
-                        selected === b.id ? `${BODY_STYLE[b.id].ring} ring-1 ring-offset-0 ring-white/20` : 'border-gray-800 hover:border-gray-600'
+                        selected === b.id ? `${BODY_STYLE[b.id].ring} ring-1 ring-flare-400/40` : 'border-hull-700 hover:border-hull-600 bg-hull-850'
                       }`}
                     >
                       <div className={`flex items-center gap-1.5 text-sm font-bold ${BODY_STYLE[b.id].text}`}>
                         <BodyDot body={b.id} /> {b.name}
+                        <span className="ml-auto text-[9px] font-normal text-hull-600">{b.id + 1}</span>
                       </div>
-                      <div className="text-[11px] text-gray-400 mt-1">{pct(b.surviveBps)} survive</div>
-                      <div className="text-[11px] text-emerald-300">{b.multLabel} per assist</div>
-                      <div className="text-[9px] text-gray-600">key {b.id + 1}</div>
+                      <div className="text-[11px] text-hull-400 mt-1">{pct(b.surviveBps)} survive</div>
+                      <div className="text-[11px] text-mint-300">{b.multLabel} per assist</div>
                     </button>
                   ))}
                 </div>
-                <div className="text-[11px] font-mono text-gray-500">
+                <div className="text-[11px] font-mono text-hull-400">
                   Best possible tour from {BODIES[selected].name}: {mult(maxPayoutMultiplier(selected))} paid.
                 </div>
 
                 <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-gray-400 uppercase">Wager {symbol}</span>
+                  <span className="text-hull-400 uppercase">Wager {symbol}</span>
                   {balance !== undefined && (
-                    <span className="text-gray-500">
+                    <span className="text-hull-400">
                       balance {fmt(balance)} {symbol}
                     </span>
                   )}
@@ -430,7 +431,7 @@ export default function App() {
                   value={wagerInput}
                   onChange={e => setWagerInput(e.target.value)}
                   inputMode="decimal"
-                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-cyan-500"
+                  className="w-full bg-hull-950 border border-hull-700 rounded-lg px-3 py-2 text-sm font-mono text-hull-100 focus:outline-none focus:border-flare-400"
                 />
                 <div className="flex flex-wrap gap-1.5">
                   {WAGER_PRESETS.map(v => (
@@ -438,7 +439,7 @@ export default function App() {
                       key={v}
                       onClick={() => setWagerInput(v)}
                       className={`px-2.5 py-1 rounded text-xs font-mono border ${
-                        wagerInput === v ? 'bg-cyan-950 border-cyan-500 text-cyan-300' : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white'
+                        wagerInput === v ? 'bg-flare-500/15 border-flare-400 text-flare-200' : 'bg-hull-800 border-hull-700 text-hull-300 hover:text-hull-100'
                       }`}
                     >
                       {v}
@@ -447,7 +448,7 @@ export default function App() {
                   {maxWager !== undefined && (
                     <button
                       onClick={() => setWagerInput(formatUnits(balance !== undefined && balance < maxWager ? balance : maxWager, decimals))}
-                      className="px-2.5 py-1 rounded text-xs font-mono border bg-gray-800 border-gray-700 text-gray-300 hover:text-white"
+                      className="px-2.5 py-1 rounded text-xs font-mono border bg-hull-800 border-hull-700 text-hull-300 hover:text-hull-100"
                     >
                       MAX
                     </button>
@@ -457,21 +458,21 @@ export default function App() {
                 <button
                   onClick={doLaunch}
                   disabled={launchBlocker !== null}
-                  className="w-full py-3.5 rounded-xl font-black font-mono tracking-wider flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-black disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full py-3.5 rounded-xl font-black font-mono tracking-wider flex items-center justify-center gap-2 bg-gradient-to-r from-nebula-500 to-flare-500 hover:brightness-110 text-white shadow-lg shadow-nebula-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Rocket className="w-5 h-5" />
                   {launchBlocker ?? `LAUNCH TO ${BODIES[selected].name.toUpperCase()}`}
                 </button>
                 {round?.revealed && (
-                  <div className="text-[11px] text-center font-mono text-gray-500">Last tour logged below. Pick a body to plan the next one.</div>
+                  <div className="text-[11px] text-center font-mono text-hull-400">Last tour logged below. Pick a body to plan the next one.</div>
                 )}
               </div>
             )}
 
-            <div className="p-3 rounded-xl bg-gray-900/60 border border-gray-800 text-[11px] font-mono text-gray-400 flex items-start gap-2">
-              <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+            <div className="p-3 rounded-xl bg-hull-900/60 border border-hull-700 text-[11px] font-mono text-hull-300 flex items-start gap-2">
+              <Sparkles className="w-4 h-4 text-flare-300 shrink-0" />
               <span>
-                Every route returns 98% on average, so route choice only sets your risk. Zig-zag the Moon for steady wins, or fly Pulsar, Jupiter, Pulsar, Jupiter for {mult(62.72)} (1 in 64).
+                Every route returns 98% on average, so route choice only sets your risk. Zig-zag the Moon for steady wins, or fly Pulsar, Black hole, Pulsar, Black hole for {mult(TOP_PAYOUT)} (1 in 1024).
               </span>
             </div>
           </div>
@@ -480,7 +481,7 @@ export default function App() {
         <HistoryTable history={history} fmt={fmt} symbol={symbol} />
       </main>
 
-      <footer className="border-t border-gray-900 py-4 text-center text-xs font-mono text-gray-500">
+      <footer className="border-t border-hull-800 py-4 text-center text-xs font-mono text-hull-400">
         Chain Jam Vol. 1 | ICasinoGameV2 multi-step session | Chain VRF per leg | 98.00% RTP on every strategy
       </footer>
     </div>
@@ -491,24 +492,24 @@ function HistoryTable({ history, fmt, symbol }: { history: HistoryEntry[]; fmt: 
   const label = (h: HistoryEntry) =>
     h.status === TourStatus.COMPLETE ? 'GRAND TOUR' : h.status === TourStatus.EJECTED ? 'BANKED' : h.status === TourStatus.CAPTURED ? 'CAPTURED' : 'ENDED';
   return (
-    <section className="p-4 rounded-xl bg-gray-900 border border-gray-800">
-      <div className="flex items-center gap-2 text-xs font-mono text-gray-400 mb-2">
-        <History className="w-4 h-4 text-cyan-400" /> FLIGHT LOG
+    <section className="p-4 rounded-xl bg-hull-900 border border-hull-700">
+      <div className="flex items-center gap-2 text-xs font-mono text-hull-400 mb-2">
+        <History className="w-4 h-4 text-nebula-300" /> FLIGHT LOG
       </div>
       {history.length === 0 ? (
-        <div className="py-4 text-center text-xs text-gray-500 font-mono">No tours flown yet.</div>
+        <div className="py-4 text-center text-xs text-hull-400 font-mono">No tours flown yet.</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs font-mono">
             <thead>
-              <tr className="border-b border-gray-800 text-gray-500">
+              <tr className="border-b border-hull-700 text-hull-400">
                 <th className="py-2 px-2">ROUTE</th>
                 <th className="py-2 px-2">RESULT</th>
                 <th className="py-2 px-2 text-right">WAGER</th>
                 <th className="py-2 px-2 text-right">PAYOUT</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800/60">
+            <tbody className="divide-y divide-hull-800">
               {history.map(h => (
                 <tr key={h.key}>
                   <td className="py-2 px-2">
@@ -518,11 +519,11 @@ function HistoryTable({ history, fmt, symbol }: { history: HistoryEntry[]; fmt: 
                       ))}
                     </span>
                   </td>
-                  <td className={`py-2 px-2 font-bold ${h.payout > 0n ? 'text-emerald-400' : 'text-red-400'}`}>{label(h)}</td>
-                  <td className="py-2 px-2 text-right text-gray-400">
+                  <td className={`py-2 px-2 font-bold ${h.payout > 0n ? 'text-mint-400' : 'text-ember-400'}`}>{label(h)}</td>
+                  <td className="py-2 px-2 text-right text-hull-400">
                     {fmt(h.wager)} {symbol}
                   </td>
-                  <td className="py-2 px-2 text-right text-white">
+                  <td className="py-2 px-2 text-right text-hull-100">
                     {fmt(h.payout)} {symbol}
                   </td>
                 </tr>
