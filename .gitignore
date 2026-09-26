@@ -24,3 +24,6 @@ coverage.json
 .idea/
 *.swp
 .DS_Store
+
+# Python
+__pycache__/
