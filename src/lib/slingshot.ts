@@ -3,11 +3,11 @@ import { decodeAbiParameters, encodeAbiParameters, parseAbiParameters, type Hex 
 // Grand Tour paytable and state machine, mirroring contracts/GravitySlingshot.sol exactly.
 // The standalone demo, the host integration and scripts/monte-carlo.ts all use this module.
 
-export type BodyId = 0 | 1 | 2 | 3;
+export type BodyId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export interface Body {
   id: BodyId;
-  key: 'moon' | 'jupiter' | 'pulsar' | 'blackhole';
+  key: 'moon' | 'jupiter' | 'pulsar' | 'blackhole' | 'comet' | 'neptune' | 'saturn' | 'redgiant';
   name: string;
   surviveBps: number;
   multNum: bigint;
@@ -16,12 +16,20 @@ export interface Body {
   blurb: string;
 }
 
+// Indexed by body id (the contract's ids). Ids 0-3 are the original four; 4-7 were added later.
 export const BODIES: readonly Body[] = [
   { id: 0, key: 'moon', name: 'Moon', surviveBps: 8000, multNum: 5n, multDen: 4n, multLabel: '1.25x', blurb: 'Gentle assist' },
   { id: 1, key: 'jupiter', name: 'Jupiter', surviveBps: 5000, multNum: 2n, multDen: 1n, multLabel: '2x', blurb: 'Gas giant' },
   { id: 2, key: 'pulsar', name: 'Pulsar', surviveBps: 2500, multNum: 4n, multDen: 1n, multLabel: '4x', blurb: 'Neutron star' },
   { id: 3, key: 'blackhole', name: 'Black hole', surviveBps: 1250, multNum: 8n, multDen: 1n, multLabel: '8x', blurb: 'Event horizon' },
+  { id: 4, key: 'comet', name: 'Comet', surviveBps: 9000, multNum: 10n, multDen: 9n, multLabel: '1.11x', blurb: 'Icy wanderer' },
+  { id: 5, key: 'neptune', name: 'Neptune', surviveBps: 7500, multNum: 4n, multDen: 3n, multLabel: '1.33x', blurb: 'Ice giant' },
+  { id: 6, key: 'saturn', name: 'Saturn', surviveBps: 6250, multNum: 8n, multDen: 5n, multLabel: '1.6x', blurb: 'Ringed giant' },
+  { id: 7, key: 'redgiant', name: 'Red giant', surviveBps: 4000, multNum: 5n, multDen: 2n, multLabel: '2.5x', blurb: 'Dying star' },
 ];
+
+/** Bodies from safest to wildest: the order of cards, keys 1-8 and the galaxy map orbits. */
+export const BODY_ORDER: readonly BodyId[] = [4, 0, 5, 6, 1, 7, 2, 3];
 
 export const MAX_LEGS = 4;
 export const NO_BODY = 255;
@@ -115,13 +123,10 @@ export function tourPayout(wager: bigint, route: readonly number[]): bigint {
 }
 
 export function topRoute(firstBody: BodyId): BodyId[] {
-  if (firstBody === 0) return [0, 3, 2, 3];
-  if (firstBody === 1) return [1, 3, 2, 3];
-  if (firstBody === 2) return [2, 3, 2, 3];
-  return [3, 2, 3, 2];
+  return firstBody === 3 ? [3, 2, 3, 2] : [firstBody, 3, 2, 3];
 }
 
-/** Worst-case payout multiplier for a tour opened on `firstBody` (297.6x up to 952.32x). */
+/** Worst-case payout multiplier for a tour opened on `firstBody` (264.53x up to 952.32x). */
 export function maxPayoutMultiplier(firstBody: BodyId): number {
   return (routeMultiplier(topRoute(firstBody)) * Number(RTP_BPS)) / Number(BASIS_POINTS);
 }

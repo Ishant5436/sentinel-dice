@@ -1,6 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { Crown, Lock, Rocket, Trophy, X } from 'lucide-react';
-import { BADGES, CHASSIS, RANKS, rankFor, type Career, type ChassisId } from '../lib/career';
+import { BADGES, CHASSIS, RANKS, levelFor, rankFor, type Career, type ChassisId } from '../lib/career';
+import { BODIES, BODY_ORDER } from '../lib/slingshot';
+import { CODEX } from '../lib/flight';
+import { BodyArt } from './BodyArt';
 import { drawProbe } from './canvas/craft';
 
 const BADGE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -110,6 +113,16 @@ export function CareerModal({ open, onClose, career }: { open: boolean; onClose:
         <div className="mt-1 text-[11px] text-hull-400">
           {next ? `${(next.min - career.lightYears).toFixed(1)} light-years to ${next.name}` : 'Highest rank reached'}
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="font-display text-flare-300">LEVEL {levelFor(career.xp).level}</span>
+          <span className="text-hull-400">
+            {levelFor(career.xp).into} / {levelFor(career.xp).span} XP
+          </span>
+          <span className="text-hull-600">|</span>
+          <span className="text-flare-300">Day streak {career.dayStreak}</span>
+          <span className="text-hull-600">|</span>
+          <span className="text-flare-300">Best bank streak {career.bestWinStreak}</span>
+        </div>
 
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
           {stats.map(([label, value]) => (
@@ -136,6 +149,23 @@ export function CareerModal({ open, onClose, career }: { open: boolean; onClose:
                   <div className={`mt-auto pt-2 text-[9px] tracking-[0.25em] ${earned ? 'text-flare-300' : 'text-hull-600'}`}>{earned ? 'EARNED' : 'LOCKED'}</div>
                 </div>
               </HoloCard>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 flex items-baseline justify-between text-[11px] tracking-widest text-hull-400">
+          <span>GALAXY CODEX</span>
+          <span className="tracking-normal text-cyan-200">{career.discovered.length} / 8 worlds charted</span>
+        </div>
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {BODY_ORDER.map(id => {
+            const charted = career.discovered.includes(id);
+            return (
+              <div key={id} className={`rounded-xl border p-2 flex flex-col items-center text-center ${charted ? 'border-cyan-300/40 bg-cyan-300/5' : 'border-hull-700 bg-hull-850'}`}>
+                <BodyArt body={id} size={40} className={charted ? '' : 'grayscale brightness-[0.25]'} />
+                <div className={`mt-1 text-xs font-semibold ${charted ? 'text-hull-100' : 'text-hull-600'}`}>{charted ? BODIES[id].name : 'Uncharted'}</div>
+                <div className="text-[10px] leading-snug text-hull-400">{charted ? CODEX[id] : 'Survive an assist here to chart it.'}</div>
+              </div>
             );
           })}
         </div>

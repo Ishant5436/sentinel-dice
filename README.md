@@ -15,12 +15,16 @@ Live: https://ishant5436.github.io/sentinel-dice/
 
 ## How it plays
 
-| Body    | Survive | Leg multiplier | Survive x multiplier |
-| ------- | ------- | -------------- | -------------------- |
-| Moon    | 80%     | 1.25x          | 1.00                 |
-| Jupiter | 50%     | 2x             | 1.00                 |
-| Pulsar  | 25%     | 4x             | 1.00                 |
-| Black hole | 12.5% | 8x            | 1.00                 |
+| Body       | Survive | Leg multiplier | Survive x multiplier |
+| ---------- | ------- | -------------- | -------------------- |
+| Comet      | 90%     | 10/9x (1.11x)  | 1.00                 |
+| Moon       | 80%     | 5/4x (1.25x)   | 1.00                 |
+| Neptune    | 75%     | 4/3x (1.33x)   | 1.00                 |
+| Saturn     | 62.5%   | 8/5x (1.6x)    | 1.00                 |
+| Jupiter    | 50%     | 2x             | 1.00                 |
+| Red giant  | 40%     | 5/2x (2.5x)    | 1.00                 |
+| Pulsar     | 25%     | 4x             | 1.00                 |
+| Black hole | 12.5%   | 8x             | 1.00                 |
 
 1. Pick a first body and a wager, then launch. Opening the session launches leg 1.
 2. After a surviving assist the tour value is the product of the leg multipliers so far.
@@ -81,18 +85,18 @@ submitAction(actionData = abi.encode(uint8 action, uint8 body))
   and `quoteForfeitPayout`. Multipliers are exact fractions (Moon = 5/4) with a single floor
   division, so the top route pays exactly the reserve committed at open, never a wei more.
 - **Reserve:** `onSessionStart` commits `maxPayout - wager` for the best route reachable from the
-  chosen first body (297.6x from the Moon, 476.16x from Jupiter, 952.32x from the Pulsar or the Black
-  hole). Settling steps return zero escrow and
+  chosen first body (264.53x from the Comet up to 952.32x from the Pulsar or the Black hole; every
+  other body is at most 4x, so adding bodies never raises the cap). Settling steps return zero escrow and
   reserve deltas, as the SDK requires.
 - **Forfeit:** `quoteForfeitPayout` returns the eject value while the player is between legs and 0
   while a leg is in flight. The value is fully determined by revealed state, and the facet pays 90%
   of it, which is always worse than ejecting, so abandoning a tour is never an edge.
-- **Risk params:** `probabilityWad` is the top route's probability (1/320 to 1/1024). The body
+- **Risk params:** `probabilityWad` is the top route's probability (9/2560 for the Comet down to 1/1024). The body
   variance is an upper bound over all strategies: for a fixed route E[M^2] equals the product of its
-  multipliers, and the largest product among routes that never pay the top tier is 160, 256 or 512
-  depending on the first body (`nonTopSecondMoment`, checked against brute force in the tests).
+  multipliers, and the largest product among routes that never pay the top tier ranges from 178 (Comet)
+  to 640 (Pulsar or Black hole) depending on the first body (`nonTopSecondMoment`, checked against brute force in the tests).
 - **Randomness:** each leg maps the VRF word to a roll in [0, 9999] by rejection sampling (no modulo
-  bias). A leg survives when `roll < 8000 / 5000 / 2500 / 1250`.
+  bias). A leg survives when `roll < surviveBps` (9000 for the Comet down to 1250 for the Black hole).
 
 ## Verification
 

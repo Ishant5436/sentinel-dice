@@ -1,11 +1,21 @@
 import type { BodyId } from '../../lib/slingshot';
 
 // World units: one unit is one CSS pixel at camera zoom 1.
-export const BODY_RADIUS: Record<BodyId, number> = { 0: 30, 1: 56, 2: 18, 3: 28 };
+// Comet is the nucleus (its coma and tails reach further); Saturn is the planet (rings reach 2.35 r).
+export const BODY_RADIUS: Record<BodyId, number> = { 0: 30, 1: 56, 2: 18, 3: 28, 4: 16, 5: 36, 6: 40, 7: 62 };
 // Closest approach: just outside each body's visible extent (the black hole's disk reaches 2.8 r).
-export const PERIAPSIS: Record<BodyId, number> = { 0: 68, 1: 94, 2: 56, 3: 88 };
+export const PERIAPSIS: Record<BodyId, number> = { 0: 68, 1: 94, 2: 56, 3: 88, 4: 54, 5: 72, 6: 106, 7: 100 };
 /** Light each body throws on the dust around it, as "r, g, b". */
-export const BODY_LIGHT: Record<BodyId, string> = { 0: '148, 163, 184', 1: '251, 176, 64', 2: '56, 189, 248', 3: '255, 138, 31' };
+export const BODY_LIGHT: Record<BodyId, string> = {
+  0: '148, 163, 184',
+  1: '251, 176, 64',
+  2: '56, 189, 248',
+  3: '255, 138, 31',
+  4: '125, 220, 240',
+  5: '96, 140, 255',
+  6: '230, 205, 150',
+  7: '255, 90, 40',
+};
 
 const TAU = Math.PI * 2;
 const wrapPi = (a: number) => a - TAU * Math.floor((a + Math.PI) / TAU);
@@ -45,7 +55,33 @@ const SHEETS: Record<BodyId, SpinSheet> = {
   // The black hole sheet tumbles the whole disk; hold frame 0 (the face-on lensed view) and show
   // rotation with orbiting clumps instead (drawBeamedBlackHole).
   3: loadSheet('blackhole', Number.POSITIVE_INFINITY, 6.2),
+  4: loadSheet('comet', 12, 3.0),
+  5: loadSheet('neptune', 16),
+  6: loadSheet('saturn', 18, 5.0),
+  7: loadSheet('redgiant', 40),
 };
+
+// Spiral galaxy backdrop (scripts/blender/render_bodies.py, render_galaxy).
+const GALAXY = new Image();
+let galaxyReady = false;
+GALAXY.onload = () => {
+  galaxyReady = true;
+};
+GALAXY.onerror = () => console.warn('Galaxy backdrop failed to load');
+GALAXY.src = './galaxy.webp';
+
+/** Distant spiral galaxy in screen space: slowly turning, with a little camera parallax. */
+export function drawGalaxy(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, parallaxX: number, parallaxY: number, alpha: number) {
+  if (!galaxyReady || alpha <= 0) return;
+  const size = Math.max(w, h) * 0.62;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(w * 0.2 - parallaxX, h * 0.26 - parallaxY);
+  ctx.rotate(-0.35 + t * 0.004);
+  ctx.drawImage(GALAXY, -size / 2, -size / 2, size, size);
+  ctx.restore();
+}
 
 /** Draw the spin loop at time t, crossfading between neighbouring frames for smooth rotation. */
 function drawSpin(ctx: CanvasRenderingContext2D, sheet: SpinSheet, x: number, y: number, r: number, t: number) {
@@ -340,6 +376,106 @@ function drawPulsar(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
 }
 
 // ---------------------------------------------------------------------------------------------
+// Comet: a broad curved dust tail and a straight ion tail stream away from the light.
+function drawCometTails(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, t: number) {
+  const dir = -0.6 + Math.sin(t * 0.4) * 0.05;
+  const len = r * 12;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(x, y);
+  ctx.rotate(dir);
+  const dust = ctx.createLinearGradient(0, 0, len, 0);
+  dust.addColorStop(0, 'rgba(255, 244, 214, 0.5)');
+  dust.addColorStop(1, 'rgba(255, 244, 214, 0)');
+  ctx.fillStyle = dust;
+  ctx.beginPath();
+  ctx.moveTo(0, -r * 0.7);
+  ctx.quadraticCurveTo(len * 0.5, -r * 0.5, len, r * 2.8);
+  ctx.lineTo(len, r * 4.6);
+  ctx.quadraticCurveTo(len * 0.45, r * 1.6, 0, r * 0.7);
+  ctx.closePath();
+  ctx.fill();
+  const ion = ctx.createLinearGradient(0, 0, len * 1.4, 0);
+  ion.addColorStop(0, 'rgba(125, 211, 252, 0.75)');
+  ion.addColorStop(1, 'rgba(56, 189, 248, 0)');
+  ctx.fillStyle = ion;
+  ctx.beginPath();
+  ctx.moveTo(0, -r * 0.35);
+  ctx.lineTo(len * 1.4, -r * 1.3);
+  ctx.lineTo(len * 1.4, -r * 0.1);
+  ctx.lineTo(0, r * 0.35);
+  ctx.closePath();
+  ctx.fill();
+  // Ion streamers ripple in the solar wind.
+  ctx.lineWidth = 0.8;
+  for (let k = 0; k < 4; k++) {
+    ctx.strokeStyle = `rgba(186, 230, 253, ${0.35 - k * 0.06})`;
+    ctx.beginPath();
+    for (let i = 0; i <= 20; i++) {
+      const f = i / 20;
+      const px = f * len * 1.35;
+      const py = -r * (0.2 + k * 0.28) * (0.4 + f) + Math.sin(f * 9 - t * 3 + k) * r * 0.25 * f;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Red giant: a breathing corona and looping prominences at the limb.
+function drawRedGiantCorona(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, t: number) {
+  const breathe = 1 + 0.03 * Math.sin(t * 0.8);
+  const corona = ctx.createRadialGradient(x, y, r * 0.85, x, y, r * 2.1 * breathe);
+  corona.addColorStop(0, 'rgba(255, 120, 40, 0.45)');
+  corona.addColorStop(0.4, 'rgba(255, 70, 20, 0.14)');
+  corona.addColorStop(1, 'rgba(255, 40, 10, 0)');
+  ctx.fillStyle = corona;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.1 * breathe, 0, TAU);
+  ctx.fill();
+}
+
+function drawProminences(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, t: number) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  for (let k = 0; k < 4; k++) {
+    const a = k * 1.7 + t * 0.03;
+    const lift = 1.18 + 0.1 * Math.sin(t * 1.1 + k * 2);
+    const a0 = a - 0.16;
+    const a1 = a + 0.16;
+    ctx.strokeStyle = `rgba(255, 150, 70, ${0.55 + 0.2 * Math.sin(t * 2 + k)})`;
+    ctx.lineWidth = r * 0.05;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(a0) * r * 0.98, y + Math.sin(a0) * r * 0.98);
+    ctx.quadraticCurveTo(x + Math.cos(a) * r * lift * 1.12, y + Math.sin(a) * r * lift * 1.12, x + Math.cos(a1) * r * 0.98, y + Math.sin(a1) * r * 0.98);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawHalo(ctx: CanvasRenderingContext2D, x: number, y: number, inner: number, outer: number, rgb: string, alpha: number) {
+  const halo = ctx.createRadialGradient(x, y, inner, x, y, outer);
+  halo.addColorStop(0, `rgba(${rgb}, ${alpha})`);
+  halo.addColorStop(1, `rgba(${rgb}, 0)`);
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, outer, 0, TAU);
+  ctx.fill();
+}
+
+const FALLBACK_COLOR: Record<BodyId, string> = {
+  0: '#94a3b8',
+  1: '#d97706',
+  2: '#7dd3fc',
+  3: '#000000',
+  4: '#a5f3fc',
+  5: '#3b82f6',
+  6: '#e3d2a6',
+  7: '#f0661c',
+};
+
 export function drawBody(ctx: CanvasRenderingContext2D, body: BodyId, x: number, y: number, t: number) {
   const r = BODY_RADIUS[body];
   const sheet = SHEETS[body];
@@ -348,10 +484,26 @@ export function drawBody(ctx: CanvasRenderingContext2D, body: BodyId, x: number,
     if (sheet.ready) drawSpin(ctx, sheet, x, y, r, t);
     return;
   }
+  if (body === 4) drawCometTails(ctx, x, y, r, t);
+  if (body === 7) drawRedGiantCorona(ctx, x, y, r, t);
+  if (body === 5) drawHalo(ctx, x, y, r * 0.95, r * 1.35, '120, 170, 255', 0.25);
+  if (body === 6) drawHalo(ctx, x, y, r * 0.95, r * 1.5, '240, 215, 160', 0.14);
   if (!sheet.ready) {
     if (body === 0) drawMoonFallback(ctx, x, y, r);
     else if (body === 1) drawJupiterFallback(ctx, x, y, r);
-    else drawBlackHoleFallback(ctx, x, y, r);
+    else if (body === 3) drawBlackHoleFallback(ctx, x, y, r);
+    else {
+      ctx.fillStyle = FALLBACK_COLOR[body];
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, TAU);
+      ctx.fill();
+    }
+    return;
+  }
+  if (body === 7) {
+    // A slow pulsation, then prominences arching over the limb.
+    drawSpin(ctx, sheet, x, y, r * (1 + 0.012 * Math.sin(t * 0.9)), t);
+    drawProminences(ctx, x, y, r, t);
     return;
   }
   if (body === 1) {

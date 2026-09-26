@@ -1,24 +1,33 @@
 import React, { useEffect, useState } from 'react';
-import { BODIES, MAX_LEGS, routeMultiplier, routeSurvival, type BodyId } from '../lib/slingshot';
+import { BODIES, BODY_ORDER, MAX_LEGS, routeMultiplier, routeSurvival, type BodyId } from '../lib/slingshot';
 import { paidMultiplier } from '../lib/flight';
 
-// Interactive system map: the four bodies on orbits in 1:2:4:8 harmonics around the launch point,
-// with the route drawn as glowing legs colored by the chance of surviving that far.
+// Interactive galaxy map: the eight bodies on orbits around the launch point (risk grows with
+// distance, periods step by sqrt(2)), with the route drawn as glowing legs colored by the chance
+// of surviving that far, over the rendered spiral galaxy.
 
 const W = 340;
-const H = 212;
+const H = 220;
 const CX = 170;
-const CY = 108;
+const CY = 112;
 const TILT = 0.42;
 const TAU = Math.PI * 2;
-const BODY_IDS: BodyId[] = [0, 1, 2, 3];
-// Risk grows with distance from the launch point; `cell` is the sprite sheet cell size.
-const ORBITS: Record<BodyId, { rx: number; period: number; phase: number; size: number; cell: number }> = {
-  0: { rx: 52, period: 30, phase: 0.9, size: 24, cell: 192 },
-  1: { rx: 86, period: 60, phase: 2.6, size: 36, cell: 256 },
-  2: { rx: 120, period: 120, phase: 4.3, size: 22, cell: 128 },
-  3: { rx: 154, period: 240, phase: 5.6, size: 56, cell: 320 },
+const BODY_IDS: readonly BodyId[] = BODY_ORDER;
+// `size` is the drawn sprite size, `cell` the sprite-sheet cell (Saturn and the Black hole
+// sheets include rings and disk, so they are drawn larger than their planet or horizon).
+const SPRITE: Record<BodyId, { size: number; cell: number }> = {
+  4: { size: 22, cell: 192 },
+  0: { size: 18, cell: 192 },
+  5: { size: 20, cell: 192 },
+  6: { size: 40, cell: 320 },
+  1: { size: 26, cell: 256 },
+  7: { size: 26, cell: 256 },
+  2: { size: 16, cell: 128 },
+  3: { size: 46, cell: 320 },
 };
+const ORBITS = Object.fromEntries(
+  BODY_ORDER.map((body, i) => [body, { rx: 34 + i * 18, period: 16 * Math.SQRT2 ** i, phase: (i * 2.39) % TAU, ...SPRITE[body] }]),
+) as Record<BodyId, { rx: number; period: number; phase: number; size: number; cell: number }>;
 // Fixed background stars for the map (deterministic so they do not jump between renders).
 const MAP_STARS = Array.from({ length: 40 }, (_, i) => ({
   x: (Math.sin(i * 91.7) * 0.5 + 0.5) * W,
@@ -37,7 +46,10 @@ export function riskColor(survival: number) {
 }
 
 /** Escalation ladder after a leg: step up to the next riskier body, then alternate the two riskiest. */
-const escalate = (from: BodyId): BodyId => (from < 3 ? ((from + 1) as BodyId) : 2);
+const escalate = (from: BodyId): BodyId => {
+  const rank = BODY_ORDER.indexOf(from);
+  return rank < BODY_ORDER.length - 1 ? BODY_ORDER[rank + 1] : BODY_ORDER[BODY_ORDER.length - 2];
+};
 
 const formatGross = (x: number) => (x < 10 ? x.toFixed(2) : x < 1000 ? x.toFixed(1) : x.toFixed(0));
 const formatSurvival = (s: number) => (s >= 0.1 ? (s * 100).toFixed(0) : (s * 100).toPrecision(2));
@@ -94,7 +106,7 @@ export function SystemMap({ base, legal, hovered, onHover, onPick, title, hint }
     }
   }
   const full = [...solid, ...ghost];
-  const pos = { 0: position(0, t), 1: position(1, t), 2: position(2, t), 3: position(3, t) } as Record<BodyId, { x: number; y: number }>;
+  const pos = Object.fromEntries(BODY_IDS.map(b => [b, position(b, t)])) as Record<BodyId, { x: number; y: number }>;
   const pairUses = new Map<string, number>();
   const legs = full.map((body, i) => {
     const prevBody = i === 0 ? null : full[i - 1];
@@ -142,6 +154,9 @@ export function SystemMap({ base, legal, hovered, onHover, onPick, title, hint }
         {MAP_STARS.map((s, i) => (
           <circle key={i} cx={s.x} cy={s.y} r={s.r} fill="rgba(226, 232, 240, 0.35)" />
         ))}
+        <g transform={`translate(${CX} ${CY}) scale(1 ${TILT * 1.5})`} opacity="0.45" style={{ mixBlendMode: 'screen' }}>
+          <image href="./galaxy.webp" x="-165" y="-165" width="330" height="330" transform={`rotate(${(t * 1.5) % 360})`} />
+        </g>
         {BODY_IDS.map(b => {
           const active = hovered === b || full.includes(b);
           return (
@@ -206,9 +221,11 @@ export function SystemMap({ base, legal, hovered, onHover, onPick, title, hint }
                 <image href={`./sprites/${BODIES[b].key}.webp`} width={o.cell * 6} height={o.cell * 6} />
               </svg>
               <circle cx={p.x} cy={p.y} r={hit} fill="transparent" />
-              <text x={p.x} y={p.y - Math.max(o.size / 2, 8) - 4} textAnchor="middle" className="fill-hull-300" style={{ fontSize: 7.5, fontWeight: 600 }}>
-                {BODIES[b].name.toUpperCase()}
-              </text>
+              {(hovered === b || full.includes(b)) && (
+                <text x={p.x} y={p.y - Math.max(o.size / 2.6, 8) - 3} textAnchor="middle" className="fill-hull-100" style={{ fontSize: 7.5, fontWeight: 600 }}>
+                  {BODIES[b].name.toUpperCase()}
+                </text>
+              )}
             </g>
           );
         })}

@@ -12,17 +12,28 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   const JUPITER = 1;
   const PULSAR = 2;
   const BLACK_HOLE = 3;
-  const BODIES = [MOON, JUPITER, PULSAR, BLACK_HOLE];
-  const SURVIVE_BPS = [8000n, 5000n, 2500n, 1250n];
+  const COMET = 4;
+  const NEPTUNE = 5;
+  const SATURN = 6;
+  const RED_GIANT = 7;
+  const BODY_COUNT = 8;
+  const BODIES = [MOON, JUPITER, PULSAR, BLACK_HOLE, COMET, NEPTUNE, SATURN, RED_GIANT];
+  const SURVIVE_BPS = [8000n, 5000n, 2500n, 1250n, 9000n, 7500n, 6250n, 4000n];
   const MULT = [
     [5n, 4n],
     [2n, 1n],
     [4n, 1n],
     [8n, 1n],
+    [10n, 9n],
+    [4n, 3n],
+    [8n, 5n],
+    [5n, 2n],
   ];
   const LAUNCH = 1;
   const EJECT = 2;
-  const WAGER = 10n ** 18n; // divisible by 4^4 * 100, so every payout is exact
+  // 10^18 * 3^6 is divisible by every route denominator (up to 4^4, 5^4 and 3^6) times 100,
+  // so every payout is exact and the 93% identity can be checked in integers.
+  const WAGER = 10n ** 18n * 729n;
 
   const TOUR_ABI = parseAbiParameters(
     "uint8 status, uint8 legs, uint8[4] route, uint16[4] rolls, uint256 payout"
@@ -125,27 +136,49 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   }
 
   describe("paytable and quotes", () => {
+    // Top route multiplier per first body as an exact fraction [num, den] (paid = x 0.93).
+    const TOP: Record<number, [bigint, bigint]> = {
+      [COMET]: [2560n, 9n], // 284.44x gross, 264.53x paid
+      [MOON]: [320n, 1n], // 297.6x paid
+      [NEPTUNE]: [1024n, 3n], // 341.33x gross, 317.44x paid
+      [SATURN]: [2048n, 5n], // 409.6x gross, 380.928x paid
+      [JUPITER]: [512n, 1n], // 476.16x paid
+      [RED_GIANT]: [640n, 1n], // 595.2x paid
+      [PULSAR]: [1024n, 1n], // 952.32x paid
+      [BLACK_HOLE]: [1024n, 1n],
+    };
+
     it("reserves exactly the top route reachable from each first body", async () => {
-      const cases = [
-        { body: MOON, payout: 297_600_000_000_000_000_000n }, // 320x * 0.93
-        { body: JUPITER, payout: 476_160_000_000_000_000_000n }, // 512x * 0.93
-        { body: PULSAR, payout: 952_320_000_000_000_000_000n }, // 1024x * 0.93
-        { body: BLACK_HOLE, payout: 952_320_000_000_000_000_000n },
-      ];
-      for (const { body, payout } of cases) {
+      for (const body of BODIES) {
+        const [num, den] = TOP[body];
+        const payout = (WAGER * num * 93n) / (den * 100n);
         const [escrow, reserve] = await game.read.quoteCaps([WAGER, gameData(body)]);
         expect(escrow).to.equal(WAGER);
         expect(reserve).to.equal(payout - WAGER);
       }
+      // The cap never grows with the new bodies: 952.32x is still the ceiling.
+      const [, pulsarReserve] = await game.read.quoteCaps([WAGER, gameData(PULSAR)]);
+      expect(pulsarReserve + WAGER).to.equal((WAGER * 95232n) / 100n);
     });
 
     it("quotes risk params: top-tier probability, 93% mean, strategy-bounded body variance", async () => {
-      const cases = [
-        { body: MOON, prob: 3_125_000_000_000_000n, secondMoment: 160n }, // 1/320
-        { body: JUPITER, prob: 1_953_125_000_000_000n, secondMoment: 256n }, // 1/512
-        { body: PULSAR, prob: 976_562_500_000_000n, secondMoment: 512n }, // 1/1024
-        { body: BLACK_HOLE, prob: 976_562_500_000_000n, secondMoment: 512n },
-      ];
+      const secondMoments: Record<number, bigint> = {
+        [COMET]: 178n,
+        [MOON]: 200n,
+        [NEPTUNE]: 214n,
+        [SATURN]: 256n,
+        [JUPITER]: 320n,
+        [RED_GIANT]: 400n,
+        [PULSAR]: 640n,
+        [BLACK_HOLE]: 640n,
+      };
+      const cases = BODIES.map(body => {
+        const [num, den] = TOP[body];
+        return { body, prob: (den * 10n ** 18n + num - 1n) / num, secondMoment: secondMoments[body] };
+      });
+      // Spot-check two probabilities by hand: 1/1024 and 9/2560.
+      expect(cases[PULSAR].prob).to.equal(976_562_500_000_000n);
+      expect(cases[COMET].prob).to.equal(3_515_625_000_000_000n);
       for (const { body, prob, secondMoment } of cases) {
         const [maxPayout, probabilityWad, expected, bodyVar] = await game.read.quoteRiskParams([
           WAGER,
@@ -161,7 +194,8 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
     });
 
     it("rejects malformed gameData and unknown bodies", async () => {
-      await expectRevert(game.read.quoteCaps([WAGER, gameData(4)]), "GravitySlingshot__InvalidBody");
+      await expectRevert(game.read.quoteCaps([WAGER, gameData(BODY_COUNT)]), "GravitySlingshot__InvalidBody");
+      await expectRevert(game.read.topRoute([BODY_COUNT]), "GravitySlingshot__InvalidBody");
       await expectRevert(game.read.quoteCaps([WAGER, "0x01"]), "GravitySlingshot__InvalidGameData");
       await expectRevert(game.read.quoteCaps([0n, gameData(MOON)]), "GravitySlingshot__InvalidWager");
     });
@@ -221,7 +255,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
         "GravitySlingshot__RepeatBody"
       );
       await expectRevert(
-        game.read.onPlayerAction([ctxFor(JUPITER, cruising), action(LAUNCH, 4)]),
+        game.read.onPlayerAction([ctxFor(JUPITER, cruising), action(LAUNCH, BODY_COUNT)]),
         "GravitySlingshot__InvalidBody"
       );
       await expectRevert(
@@ -253,8 +287,16 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   describe("exhaustive strategy check (every route x every eject point)", () => {
     const routes = allRoutes();
 
-    it("enumerates all 160 legal strategies", () => {
-      expect(routes.length).to.equal(4 + 12 + 36 + 108);
+    it("enumerates all 3200 legal strategies", () => {
+      expect(routes.length).to.equal(8 + 56 + 392 + 2744);
+    });
+
+    it("every leg is exactly fair: surviveBps * multiplier == 1", async () => {
+      for (const body of BODIES) {
+        const [num, den] = await game.read.legMultiplier([body]);
+        expect(BigInt(await game.read.surviveBps([body])) * num).to.equal(10000n * den);
+        expect([num, den]).to.deep.equal(MULT[body]);
+      }
     });
 
     it("pays exactly 93.00% expected return for every strategy, within the reserve", async () => {
@@ -281,9 +323,12 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
         const fromFirst = routes.filter(r => r[0] === first);
         const best = Math.max(...fromFirst.map(product));
         expect(product(top)).to.equal(best);
-        const nonTop = fromFirst.filter(r => r.join() !== top.join()).map(product);
-        expect(Math.max(...nonTop)).to.equal(Number(await game.read.nonTopSecondMoment([first])));
-        expect(Math.max(...nonTop)).to.equal([160, 256, 512, 512][first]);
+        expect(fromFirst.filter(r => product(r) === best).length).to.equal(1); // unique top route
+        const nonTop = Math.max(...fromFirst.filter(r => r.join() !== top.join()).map(product));
+        const bound = Number(await game.read.nonTopSecondMoment([first]));
+        // The bound is the enumerated maximum rounded up (Comet and Neptune routes are fractional).
+        expect(bound).to.equal(Math.ceil(nonTop - 1e-9));
+        expect(bound).to.equal([200, 320, 640, 640, 178, 214, 256, 400][first]);
       }
     });
   });

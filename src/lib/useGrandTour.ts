@@ -23,6 +23,7 @@ const MIN_BURN_MS = 1800;
 const OUTCOME_MS = 1500;
 const DEMO_VRF_MS = 900;
 const HISTORY_LIMIT = 12;
+const DEMO_START = 100n * 10n ** 18n;
 
 export type Busy = 'opening' | 'launch' | 'eject' | null;
 
@@ -65,7 +66,7 @@ export function useGrandTour(hostApi: HostApiV1 | null, snapshot: HostSnapshotV1
   const [sceneKey, setSceneKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [demoHistory, setDemoHistory] = useState<HistoryEntry[]>([]);
-  const [demoBalance, setDemoBalance] = useState<bigint>(100n * 10n ** 18n);
+  const [demoBalance, setDemoBalance] = useState<bigint>(DEMO_START);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const nextRoundId = useRef(1);
   const revealScheduledFor = useRef(0);
@@ -291,5 +292,8 @@ export function useGrandTour(hostApi: HostApiV1 | null, snapshot: HostSnapshotV1
 
   const clearError = useCallback(() => setError(null), []);
 
-  return { round, sceneKey, error, clearError, start, launch, eject, reset, history, demoBalance };
+  // Demo only: top the practice balance back up so a broke demo pilot can keep flying.
+  const refuelDemo = useCallback(() => setDemoBalance(b => (b < DEMO_START ? DEMO_START : b)), []);
+
+  return { round, sceneKey, error, clearError, start, launch, eject, reset, history, demoBalance, refuelDemo };
 }

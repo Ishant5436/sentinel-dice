@@ -1,6 +1,6 @@
 // Monte Carlo RTP check for Grand Tour, driven through the same state machine the UI uses.
 // Run: node scripts/monte-carlo.ts [roundsPerStrategy]
-// The exact proof lives in test/GravitySlingshot.test.ts (all 45 strategies, integer math);
+// The exact proof lives in test/GravitySlingshot.test.ts (all 3200 strategies, integer math);
 // this is the empirical illustration that route and stopping choices never move RTP off 93%.
 import {
   BODIES,
@@ -34,9 +34,12 @@ const STRATEGIES: Array<{ name: string; first: () => BodyId; policy: Policy }> =
   { name: 'Pulsar-Jupiter loop (P J P J)', first: () => 2, policy: fixedRoute([2, 1, 2, 1]) },
   { name: 'Black hole once, eject', first: () => 3, policy: fixedRoute([3]) },
   { name: 'Grand Tour max (P B P B)', first: () => 2, policy: fixedRoute([2, 3, 2, 3]) },
+  { name: 'Comet drift (C N C N)', first: () => 4, policy: fixedRoute([4, 5, 4, 5]) },
+  { name: 'Ring run (Saturn, Red giant, Saturn)', first: () => 6, policy: fixedRoute([6, 7, 6]) },
+  { name: 'Red giant then Black hole, eject', first: () => 7, policy: fixedRoute([7, 3]) },
   {
     name: 'Chaos pilot (random bodies, 30% eject)',
-    first: () => randomBody([0, 1, 2, 3]),
+    first: () => randomBody([0, 1, 2, 3, 4, 5, 6, 7]),
     policy: tour => (rollUniformBps() < 3000 ? 'eject' : randomBody(legalNextBodies(tour))),
   },
 ];

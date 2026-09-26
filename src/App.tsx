@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 import { computeMaxWager } from '@chain/casino-sdk/guest';
 import { useCasinoHost } from './lib/useCasinoHost';
 import { useGrandTour, isTerminalTour, type HistoryEntry, type Round } from './lib/useGrandTour';
 import {
   BODIES,
+  BODY_ORDER,
   MAX_LEGS,
   TourStatus,
   flownRoute,
@@ -21,17 +22,54 @@ import { BodyArt } from './components/BodyArt';
 import { HowToPlay, helpAlreadySeen } from './components/HowToPlay';
 import { orbitalAudio } from './audio/orbitalAudio';
 import { spaceScore, type Intensity } from './audio/spaceScore';
-import { AlertTriangle, Award, CheckCircle2, HelpCircle, History, Music, Orbit, Rocket, RotateCcw, Tv, Volume2, VolumeX, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Award,
+  CheckCircle2,
+  Flame,
+  Fuel,
+  HelpCircle,
+  History,
+  Music,
+  Orbit,
+  Rocket,
+  RotateCcw,
+  Sparkles,
+  Star,
+  Target,
+  Tv,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
 import { ROUTE_PRESETS, missionDesignation, paidMultiplier, presetSummary, telemetry } from './lib/flight';
-import { BADGES, loadCareer, rankFor, recordTour } from './lib/career';
+import { BADGES, addXp, dayKey, levelFor, loadCareer, rankFor, recordTour, touchDay } from './lib/career';
+import { CLEAR_BONUS_XP, applyTour, loadBoard } from './lib/missions';
+import { useCountUp } from './lib/useCountUp';
 import { Blackbox } from './components/Blackbox';
 import { CareerModal } from './components/CareerModal';
 import { CRT_FILTER_ID, CrtLayer, FlightGauges } from './components/Instruments';
+import { MissionsPanel } from './components/Missions';
 import { SystemMap } from './components/SystemMap';
 import { TitleScreen, titleAlreadySeen } from './components/TitleScreen';
+import { WinCelebration, winTier, type Win } from './components/WinCelebration';
 
-const BODY_IDS: BodyId[] = [0, 1, 2, 3];
 const CRT_KEY = 'grand-tour-crt';
+const rankOf = (body: BodyId) => BODY_ORDER.indexOf(body);
+
+type ToastTone = 'badge' | 'discovery' | 'mission' | 'level' | 'streak';
+interface Toast {
+  id: number;
+  tone: ToastTone;
+  text: string;
+}
+const TOAST_STYLE: Record<ToastTone, { box: string; Icon: typeof Award }> = {
+  badge: { box: 'border-flare-400/60 text-flare-200 shadow-flare-500/20', Icon: Award },
+  discovery: { box: 'border-cyan-300/60 text-cyan-200 shadow-cyan-400/20', Icon: Sparkles },
+  mission: { box: 'border-mint-400/60 text-mint-300 shadow-mint-400/20', Icon: Target },
+  level: { box: 'border-nebula-400/70 text-nebula-300 shadow-nebula-500/30', Icon: Star },
+  streak: { box: 'border-flare-500/60 text-flare-300 shadow-flare-500/20', Icon: Flame },
+};
 
 function readFlag(key: string): boolean {
   try {
@@ -55,6 +93,10 @@ const BODY_TONE: Record<BodyId, { text: string; ring: string; chip: string }> = 
   1: { text: 'text-amber-300', ring: 'border-amber-400/70 bg-amber-400/10', chip: 'bg-amber-400/15 text-amber-200' },
   2: { text: 'text-sky-300', ring: 'border-sky-400/70 bg-sky-400/10', chip: 'bg-sky-400/15 text-sky-200' },
   3: { text: 'text-nebula-300', ring: 'border-nebula-400/70 bg-nebula-500/10', chip: 'bg-nebula-500/20 text-nebula-300' },
+  4: { text: 'text-cyan-200', ring: 'border-cyan-300/70 bg-cyan-300/10', chip: 'bg-cyan-300/15 text-cyan-100' },
+  5: { text: 'text-blue-300', ring: 'border-blue-400/70 bg-blue-400/10', chip: 'bg-blue-400/15 text-blue-200' },
+  6: { text: 'text-yellow-200', ring: 'border-yellow-200/70 bg-yellow-200/10', chip: 'bg-yellow-200/15 text-yellow-100' },
+  7: { text: 'text-orange-400', ring: 'border-orange-400/70 bg-orange-500/10', chip: 'bg-orange-500/20 text-orange-200' },
 };
 const WAGER_PRESETS = ['0.1', '1', '5', '10'];
 const TOP_PAYOUT = maxPayoutMultiplier(2);
@@ -181,22 +223,17 @@ function BodyCard({
       onMouseEnter={() => onHover?.(true)}
       onMouseLeave={() => onHover?.(false)}
       disabled={disabled}
-      className={`relative rounded-xl border p-2 text-left flex items-center gap-2 transition-all ${
+      aria-label={`${b.name}, ${pct(b.surviveBps)} survive, pays ${pays}`}
+      className={`relative rounded-xl border px-1 pt-2 pb-1.5 flex flex-col items-center text-center transition-all ${
         disabled ? 'border-hull-800 bg-hull-900 opacity-40 cursor-not-allowed' : selected ? `${tone.ring} ring-1 ring-flare-400/50` : 'border-hull-700 bg-hull-850 hover:border-hull-600 hover:-translate-y-0.5'
       }`}
     >
-      <BodyArt body={body} size={44} className={disabled ? 'grayscale' : ''} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-1">
-          <span className={`font-semibold text-sm truncate ${tone.text}`}>{b.name}</span>
-          <span className="text-[9px] text-hull-600">{body + 1}</span>
-        </div>
-        <div className="mt-1 flex flex-wrap gap-1">
-          <span className="px-1.5 py-0.5 rounded bg-hull-800 text-[10px] text-hull-300 tabular-nums">{pct(b.surviveBps)}</span>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums ${tone.chip}`}>{pays}</span>
-        </div>
-        {note && <div className="text-[10px] text-hull-400 mt-0.5 truncate">{note}</div>}
-      </div>
+      <span className="absolute top-1 left-1.5 text-[9px] text-hull-600">{rankOf(body) + 1}</span>
+      <BodyArt body={body} size={36} className={disabled ? 'grayscale' : ''} />
+      <span className={`mt-1 w-full truncate font-semibold text-[11px] leading-tight ${tone.text}`}>{b.name}</span>
+      <span className="text-[9px] text-hull-400 tabular-nums">{pct(b.surviveBps)} survive</span>
+      <span className={`mt-0.5 px-1.5 rounded text-[10px] font-semibold tabular-nums ${tone.chip}`}>{pays}</span>
+      {note && <span className="w-full truncate text-[9px] text-hull-400">{note}</span>}
     </button>
   );
 }
@@ -235,7 +272,7 @@ function FlightLog({ history, fmt, symbol }: { history: HistoryEntry[]; fmt: (v:
 
 export default function App() {
   const { hostApi, snapshot } = useCasinoHost();
-  const { round, sceneKey, error, clearError, start, launch, eject, reset, history, demoBalance } = useGrandTour(hostApi, snapshot);
+  const { round, sceneKey, error, clearError, start, launch, eject, reset, history, demoBalance, refuelDemo } = useGrandTour(hostApi, snapshot);
   const [selected, setSelected] = useState<BodyId>(1);
   const [wagerInput, setWagerInput] = useState('1');
   const [sfxOn, setSfxOn] = useState(true);
@@ -246,15 +283,26 @@ export default function App() {
   const [target, setTarget] = useState<BodyId | null>(null);
   const [hovered, setHovered] = useState<BodyId | null>(null);
   const [volume, setVolume] = useState(1);
-  const [career, setCareer] = useState(() => loadCareer());
+  // Counting today's visit up front keeps the day streak right on the title screen.
+  const [career, setCareer] = useState(() => touchDay(loadCareer()));
   const [careerOpen, setCareerOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [board, setBoard] = useState(() => loadBoard());
+  const [win, setWin] = useState<Win | null>(null);
   const [atPeriapsis, setAtPeriapsis] = useState(false);
   const [jitter, setJitter] = useState(0);
   const [titleOpen, setTitleOpen] = useState(() => !titleAlreadySeen());
   const [crtOn, setCrtOn] = useState(() => readFlag(CRT_KEY));
   const pilot = rankFor(career.lightYears);
+  const pilotLevel = levelFor(career.xp);
   const recordedRound = useRef(0);
+  const toastId = useRef(0);
+  const pushToast = (tone: ToastTone, text: string) => {
+    const id = ++toastId.current;
+    setToasts(list => [...list, { id, tone, text }].slice(-4));
+    setTimeout(() => setToasts(list => list.filter(t => t.id !== id)), 4600);
+  };
+  const clearWin = useCallback(() => setWin(null), []);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
 
   const decimals = snapshot?.token.decimals ?? 18;
@@ -323,8 +371,11 @@ export default function App() {
   const mapLegal: BodyId[] = inTour
     ? nextBodies
     : mapBase.length < MAX_LEGS
-      ? BODY_IDS.filter(b => b !== mapBase[mapBase.length - 1])
+      ? BODY_ORDER.filter(b => b !== mapBase[mapBase.length - 1])
       : [];
+  const shownValue = useCountUp(round ? routeMultiplier(survived) : maxPayoutMultiplier(selected), 700);
+  // Demo pilots who run dry can refuel the practice balance and keep flying.
+  const demoDry = !hostApi && demoBalance < (wager ?? 10n ** 17n);
   const liveRow = round?.sessionKey ? snapshot?.sessions.items.find(item => item.sessionKey === round.sessionKey) : undefined;
   const vrfWords = liveRow?.raw.randomnessRequests?.map(r => r.randomness) ?? (liveRow?.raw.randomness ? [liveRow.raw.randomness] : []);
   const verifyVrf =
@@ -368,17 +419,40 @@ export default function App() {
     };
   }, [tour?.status, tour?.legs]);
 
-  // Career: fold each finished tour in once, remember its route for re-fly, toast new badges.
+  // Progression: fold each finished tour in once (career, codex, missions, XP), remember its
+  // route for re-fly, then surface everything it earned. All of it is cosmetic.
   useEffect(() => {
     if (!round?.revealed || round.aborted || recordedRound.current === round.id) return;
     recordedRound.current = round.id;
     const route = flownRoute(round.shown);
     setLastRoute(plan.length && route.every((b, i) => plan[i] === b) ? plan : route);
-    const { career: next, unlocked } = recordTour(career, round.shown, round.wager);
+    const record = recordTour(career, round.shown, round.wager);
+    // The board rolls over at local midnight even if the tab stayed open.
+    const missions = applyTour(board.day === dayKey() ? board : loadBoard(), round.shown, round.wager);
+    const missionXp = missions.completed.reduce((xp, m) => xp + m.xp, 0) + (missions.cleared ? CLEAR_BONUS_XP : 0);
+    // The day's first tour pays a streak bonus that grows with consecutive days (capped).
+    const streakXp = missions.firstTourToday ? Math.min(140, 20 * Math.max(1, record.career.dayStreak)) : 0;
+    const next = missionXp + streakXp > 0 ? addXp(record.career, missionXp + streakXp) : record.career;
     setCareer(next);
-    if (unlocked.length) {
-      setToast(`Badge unlocked: ${unlocked.map(id => BADGES.find(b => b.id === id)?.name).join(', ')}`);
-      setTimeout(() => setToast(null), 4500);
+    setBoard(missions.board);
+
+    for (const body of record.discoveries) pushToast('discovery', `New world charted: ${BODIES[body].name}`);
+    for (const id of record.unlocked) pushToast('badge', `Badge unlocked: ${BADGES.find(b => b.id === id)?.name ?? id}`);
+    for (const m of missions.completed) pushToast('mission', `Mission complete: ${m.title} +${m.xp} XP`);
+    if (missions.cleared) pushToast('mission', `All daily missions clear +${CLEAR_BONUS_XP} XP`);
+    if (streakXp) pushToast('streak', `Day ${next.dayStreak} flight streak +${streakXp} XP`);
+    if (next.winStreak >= 3) pushToast('streak', `${next.winStreak} banks in a row`);
+    const levelNow = levelFor(next.xp).level;
+    if (levelNow > levelFor(career.xp).level) {
+      pushToast('level', `Level ${levelNow} reached`);
+      orbitalAudio.playEscapeSuccess();
+    } else if (missions.completed.length || record.discoveries.length) {
+      orbitalAudio.playBlip(1047);
+    }
+    const payout = round.shown.payout;
+    if (payout > 0n && round.wager > 0n) {
+      const multiple = Number((payout * 10000n) / round.wager) / 10000;
+      if (winTier(multiple)) setWin({ key: round.id, multiple, amount: Number(formatUnits(payout, decimals)), symbol });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round?.revealed, round?.id]);
@@ -424,7 +498,7 @@ export default function App() {
     if (round?.revealed) reset();
     setSelected(body);
     if (plan[0] !== body) setPlan([]);
-    orbitalAudio.playBlip(500 + body * 180);
+    orbitalAudio.playBlip(440 + rankOf(body) * 90);
   };
   const choosePreset = (route: BodyId[]) => {
     if (inTour) return;
@@ -461,7 +535,7 @@ export default function App() {
     if (round?.revealed) reset();
     setSelected(mapBase[0]);
     setPlan([...mapBase, body]);
-    orbitalAudio.playBlip(620 + body * 120);
+    orbitalAudio.playBlip(520 + rankOf(body) * 90);
   };
   const scaleWager = (factor: number) => {
     const current = Number(wagerInput) || 0;
@@ -469,7 +543,24 @@ export default function App() {
     setWagerInput(String(Number(next.toFixed(4))));
   };
 
-  // Keyboard: 1-4 pick or burn a body, E ejects, Enter launches.
+  // How the focused control got focus: a pointer press, or keyboard navigation (Tab).
+  const focusFromPointer = useRef(false);
+  useEffect(() => {
+    const onPointer = () => {
+      focusFromPointer.current = true;
+    };
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') focusFromPointer.current = false;
+    };
+    window.addEventListener('pointerdown', onPointer, true);
+    window.addEventListener('keydown', onTab, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer, true);
+      window.removeEventListener('keydown', onTab, true);
+    };
+  }, []);
+
+  // Keyboard: 1-8 pick or aim a body (safest to wildest), E ejects, Space/Enter launches or burns, R re-arms.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && (careerOpen || helpOpen)) {
@@ -477,14 +568,18 @@ export default function App() {
         setHelpOpen(false);
         return;
       }
-      // Never hijack keys meant for a focused control: Enter/Space must press that button, not launch a tour.
+      // Never hijack keys meant for a control the player reached with Tab: Enter/Space must press that
+      // button. A button that merely kept focus after a mouse click must not swallow the shortcuts,
+      // or Space would re-press the preset instead of launching. (:focus-visible cannot tell these
+      // apart: Chrome flips it on at the first keydown.)
       const el = e.target instanceof Element ? e.target : null;
-      const interactive = el?.closest('input, textarea, select, button, a[href], [role="button"], [contenteditable="true"]');
-      if (interactive || helpOpen || careerOpen || titleOpen) return;
+      const typing = el?.closest('input, textarea, select, [contenteditable="true"]');
+      const control = el?.closest('button, a[href], [role="button"]');
+      if (typing || (control && !focusFromPointer.current) || helpOpen || careerOpen || titleOpen) return;
       const n = Number(e.key);
       const key = e.key.toLowerCase();
-      if (n >= 1 && n <= BODIES.length) {
-        const body = (n - 1) as BodyId;
+      if (n >= 1 && n <= BODY_ORDER.length) {
+        const body = BODY_ORDER[n - 1];
         if (inTour) {
           if (nextBodies.includes(body)) setTarget(body);
         } else pickBody(body);
@@ -493,7 +588,11 @@ export default function App() {
         e.preventDefault();
         if (!inTour) doLaunch();
         else if (burnTarget !== null) void launch(burnTarget);
-      } else if (key === 'r') rearm();
+      } else if (key === 'r') {
+        // One key to fly the same route again, matching the RE-FLY button; otherwise re-arm the plan.
+        if (round?.revealed && lastRoute.length && launchBlocker === null) reFly();
+        else rearm();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -578,6 +677,22 @@ export default function App() {
               <Tv className="w-4 h-4" />
             </IconButton>
           </span>
+          <button
+            onClick={() => setCareerOpen(true)}
+            title={`Pilot level ${pilotLevel.level}: ${pilotLevel.into} / ${pilotLevel.span} XP to the next level`}
+            className="hidden md:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-hull-850 border border-hull-700 hover:border-hull-600"
+          >
+            <span className="font-display text-[11px] text-flare-300">LV {pilotLevel.level}</span>
+            <span className="w-16 h-1.5 rounded-full bg-hull-800 overflow-hidden">
+              <span className="block h-full bg-gradient-to-r from-nebula-500 to-flare-400 transition-all duration-700" style={{ width: `${pilotLevel.progress * 100}%` }} />
+            </span>
+            {career.dayStreak > 1 && (
+              <span className="flex items-center gap-0.5 text-[10px] text-flare-300">
+                <Flame className="w-3 h-3" />
+                {career.dayStreak}d
+              </span>
+            )}
+          </button>
           <IconButton title={`Pilot career: ${pilot.rank.name}`} onClick={() => setCareerOpen(true)}>
             <Award className="w-4 h-4" />
           </IconButton>
@@ -617,19 +732,29 @@ export default function App() {
           <div className="absolute top-3 inset-x-0 flex flex-col items-end pr-4 sm:items-center sm:pr-0 pointer-events-none">
             <div className="text-[10px] tracking-[0.3em] text-gray-400">{round ? 'TOUR VALUE' : 'BEST TOUR'}</div>
             <div key={`v-${survived.length}-${round ? 1 : 0}`} className="font-display text-3xl sm:text-4xl text-emerald-300 drop-shadow-[0_0_18px_rgba(52,211,153,0.35)] animate-pop tabular-nums">
-              {round ? mult(routeMultiplier(survived)) : mult(maxPayoutMultiplier(selected))}
+              {mult(shownValue)}
             </div>
             {round && survived.length > 0 && (
               <div className="text-xs text-amber-300 tabular-nums">
                 bank {fmt(cashValue)} {symbol}
               </div>
             )}
+            {career.winStreak >= 2 && (
+              <div className="mt-1 flex items-center gap-1 rounded-full border border-flare-500/40 bg-black/40 px-2 py-0.5 text-[10px] tracking-widest text-flare-300">
+                <Flame className="w-3 h-3" /> {career.winStreak} BANK STREAK
+              </div>
+            )}
           </div>
-          {outcome && (
+          {outcome && !win && (
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none px-4">
               <div key={`o-${sceneKey}`} className={`px-5 py-3 rounded-xl border text-center animate-pop ${toneClass[outcome.tone as keyof typeof toneClass]}`}>
                 <div className="font-display text-sm sm:text-base tracking-wider">{outcome.title}</div>
                 <div className="text-xs opacity-90 mt-0.5">{outcome.body}</div>
+                {round?.revealed && (
+                  <div className="mt-1.5 text-[10px] tracking-widest opacity-70">
+                    SPACE FLY AGAIN{lastRoute.length > 1 ? ' | R RE-FLY ROUTE' : ''}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -705,19 +830,19 @@ export default function App() {
                       hint="click to aim, SPACE to burn"
                     />
                   )}
-                  <div className="grid grid-cols-2 gap-2">
-                    {BODIES.map(b => {
-                      const allowed = nextBodies.includes(b.id);
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {BODY_ORDER.map(id => {
+                      const allowed = nextBodies.includes(id);
                       return (
                         <BodyCard
-                          key={b.id}
-                          body={b.id}
-                          selected={burnTarget === b.id}
-                          onHover={h => setHovered(h ? b.id : null)}
+                          key={id}
+                          body={id}
+                          selected={burnTarget === id}
+                          onHover={h => setHovered(h ? id : null)}
                           disabled={!allowed || round.busy !== null}
-                          onClick={() => void launch(b.id)}
-                          pays={allowed ? mult(routeMultiplier([...survived, b.id])) : b.multLabel}
-                          note={allowed ? `bank ${fmt(tourPayout(round.wager, [...survived, b.id]))}` : 'just left it'}
+                          onClick={() => void launch(id)}
+                          pays={allowed ? mult(routeMultiplier([...survived, id])) : BODIES[id].multLabel}
+                          note={allowed ? `bank ${fmt(tourPayout(round.wager, [...survived, id]))}` : 'just left it'}
                         />
                       );
                     })}
@@ -764,12 +889,12 @@ export default function App() {
                   hovered={hovered}
                   onHover={setHovered}
                   onPick={pickOnMap}
-                  title="SYSTEM MAP"
-                  hint={mapLegal.length ? 'click bodies to chain legs' : 'four legs planned'}
+                  title="GALAXY MAP"
+                  hint={mapLegal.length ? 'click worlds to chain legs' : 'four legs planned'}
                 />
-                <div className="grid grid-cols-2 gap-2">
-                  {BODIES.map(b => (
-                    <BodyCard key={b.id} body={b.id} selected={selected === b.id} onClick={() => pickBody(b.id)} onHover={h => setHovered(h ? b.id : null)} pays={`${b.multLabel} PAYS`} />
+                <div className="grid grid-cols-4 gap-1.5">
+                  {BODY_ORDER.map(id => (
+                    <BodyCard key={id} body={id} selected={selected === id} onClick={() => pickBody(id)} onHover={h => setHovered(h ? id : null)} pays={`${BODIES[id].multLabel}`} />
                   ))}
                 </div>
                 <div className="rounded-xl border border-hull-700 bg-hull-850 p-3">
@@ -836,6 +961,17 @@ export default function App() {
                     <Kbd>R</Kbd>
                   </button>
                 )}
+                {demoDry && (
+                  <button
+                    onClick={() => {
+                      refuelDemo();
+                      orbitalAudio.playBlip(660);
+                    }}
+                    className="w-full py-2.5 rounded-xl border border-mint-400/60 bg-mint-400/10 text-mint-300 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-mint-400/20"
+                  >
+                    <Fuel className="w-4 h-4" /> REFUEL PRACTICE BALANCE TO 100 DEMO
+                  </button>
+                )}
                 <button
                   onClick={doLaunch}
                   disabled={launchBlocker !== null}
@@ -848,6 +984,7 @@ export default function App() {
               </>
             )}
 
+            <MissionsPanel board={board} />
             <FlightLog history={history} fmt={fmt} symbol={symbol} />
             <Blackbox tour={round ? tour : null} words={vrfWords} demo={!hostApi} onVerify={verifyVrf} />
             <p className="text-[10px] leading-relaxed text-hull-600">
@@ -865,14 +1002,24 @@ export default function App() {
         }}
         rankName={pilot.rank.name}
         tours={career.tours}
+        level={pilotLevel.level}
+        dayStreak={career.dayStreak}
+        missionsLeft={board.missions.filter(m => !m.done).length}
+        worldsCharted={career.discovered.length}
       />
       <HowToPlay open={helpOpen} onClose={() => setHelpOpen(false)} />
       <CareerModal open={careerOpen} onClose={() => setCareerOpen(false)} career={career} />
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl border border-flare-400/60 bg-hull-900 text-flare-200 text-sm font-semibold shadow-lg shadow-flare-500/20 animate-pop flex items-center gap-2">
-          <Award className="w-4 h-4" /> {toast}
-        </div>
-      )}
+      <WinCelebration win={win} onDone={clearWin} />
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none" aria-live="polite">
+        {toasts.map(t => {
+          const { box, Icon } = TOAST_STYLE[t.tone];
+          return (
+            <div key={t.id} className={`px-4 py-2 rounded-xl border bg-hull-900/95 text-sm font-semibold shadow-lg animate-pop flex items-center gap-2 whitespace-nowrap ${box}`}>
+              <Icon className="w-4 h-4" /> {t.text}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

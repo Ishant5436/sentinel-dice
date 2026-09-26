@@ -22,9 +22,20 @@ function markTitleSeen() {
   }
 }
 
-const CHIPS = [`TOP ROUTE x${maxPayoutMultiplier(2).toFixed(2)}`, '93% RTP ON EVERY ROUTE', '4 GRAVITY ASSISTS', 'CHAIN VRF'];
+const CHIPS = [`TOP ROUTE x${maxPayoutMultiplier(2).toFixed(2)}`, '8 WORLDS', '93% RTP ON EVERY ROUTE', 'CHAIN VRF'];
 
-export function TitleScreen({ open, onBegin, rankName, tours }: { open: boolean; onBegin: () => void; rankName: string; tours: number }) {
+interface TitleProps {
+  open: boolean;
+  onBegin: () => void;
+  rankName: string;
+  tours: number;
+  level: number;
+  dayStreak: number;
+  missionsLeft: number;
+  worldsCharted: number;
+}
+
+export function TitleScreen({ open, onBegin, rankName, tours, level, dayStreak, missionsLeft, worldsCharted }: TitleProps) {
   const begin = () => {
     markTitleSeen();
     onBegin();
@@ -58,7 +69,7 @@ export function TitleScreen({ open, onBegin, rankName, tours }: { open: boolean;
         </h1>
         <div className="mt-4 h-[3px] w-40 rounded-full bg-gradient-to-r from-nebula-500 via-flare-500 to-transparent" />
         <p className="mt-5 text-hull-300 text-sm sm:text-base max-w-md leading-relaxed">
-          Slingshot past the Moon, Jupiter, a Pulsar and a Black hole. Every assist multiplies your tour value. Bank it any time, or burn onward. Every roll comes from Chain VRF.
+          Chart a course across the galaxy: comets, ringed Saturn, a dying red giant, a pulsar and a black hole. Every assist multiplies your tour value. Bank it any time, or burn onward. Every roll comes from Chain VRF.
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
           {CHIPS.map(chip => (
@@ -75,8 +86,20 @@ export function TitleScreen({ open, onBegin, rankName, tours }: { open: boolean;
           <Rocket className="w-5 h-5" /> BEGIN MISSION
         </button>
         <div className="mt-3 text-[11px] text-hull-400">Press Enter. Sound and music start here.</div>
+        <div className="mt-6 flex flex-wrap gap-2">
+          {[
+            { label: dayStreak > 1 ? `DAY ${dayStreak} STREAK` : 'DAY 1 OF YOUR STREAK', tone: 'text-flare-300 border-flare-500/40' },
+            { label: missionsLeft > 0 ? `${missionsLeft} DAILY MISSION${missionsLeft === 1 ? '' : 'S'} WAITING` : 'DAILY MISSIONS CLEAR', tone: 'text-mint-300 border-mint-400/40' },
+            { label: `${worldsCharted}/8 WORLDS CHARTED`, tone: 'text-cyan-200 border-cyan-300/40' },
+            { label: `PILOT LV ${level}`, tone: 'text-nebula-300 border-nebula-400/40' },
+          ].map(item => (
+            <span key={item.label} className={`px-2.5 py-1 rounded-lg border bg-hull-950/60 text-[10px] tracking-widest ${item.tone}`}>
+              {item.label}
+            </span>
+          ))}
+        </div>
         {tours > 0 && (
-          <div className="mt-6 text-xs text-hull-300">
+          <div className="mt-3 text-xs text-hull-300">
             Welcome back, <span className="text-flare-300">{rankName}</span>. {tours} tour{tours === 1 ? '' : 's'} on record.
           </div>
         )}

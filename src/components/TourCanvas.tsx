@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import type { BodyId } from '../lib/slingshot';
 import type { ChassisId } from '../lib/career';
-import { BODY_LIGHT, BODY_RADIUS, PERIAPSIS, drawBody, paintNebula, pulsarBeamAngle } from './canvas/celestial';
+import { BODY_LIGHT, BODY_RADIUS, PERIAPSIS, drawBody, drawGalaxy, paintNebula, pulsarBeamAngle } from './canvas/celestial';
 import { drawFilament, drawProbe, drawSpentStage } from './canvas/craft';
 import { drawHudFrame, drawNavball, type Attitude } from './canvas/hud';
 
@@ -46,7 +46,9 @@ const WAVE_LIFE_S = 2.2;
 const MAX_WAVES = 6;
 const FILAMENT_NODES = 8;
 /** How far tidal shear stretches the probe before it is lost, per body. */
-const TIDAL: Record<BodyId, number> = { 0: 0.25, 1: 0.45, 2: 0.8, 3: 1 };
+const TIDAL: Record<BodyId, number> = { 0: 0.25, 1: 0.45, 2: 0.8, 3: 1, 4: 0.2, 5: 0.35, 6: 0.4, 7: 0.6 };
+/** Periapsis buffeting per body while the VRF resolves (Red giant: heat shimmer). */
+const TURBULENCE: Record<BodyId, number> = { 0: 0, 1: 0, 2: 1.4, 3: 2.6, 4: 0, 5: 0, 6: 0, 7: 0.9 };
 const TRAIL_COLOR: Record<CanvasPhase, string> = {
   idle: '#38bdf8',
   burning: '#38bdf8',
@@ -170,11 +172,10 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
         ((phase === 'survived' || phase === 'captured' || phase === 'complete') && phaseSim < 300);
       phaseSim += dt * 1000 * (slowMo ? 0.8 : 1);
       const elapsed = phaseSim;
-      // Turbulence builds while holding periapsis around the Pulsar or the Black hole.
-      const heavy = body === 2 || body === 3;
+      // Turbulence builds while holding periapsis around the Pulsar, the Black hole or the Red giant.
       const turbulence =
-        heavy && phase === 'burning' && !reduceMotion
-          ? (body === 3 ? 2.6 : 1.4) * (elapsed > APPROACH_MS ? 1 + Math.min(1.5, (elapsed - APPROACH_MS) / 1500) : elapsed / APPROACH_MS)
+        TURBULENCE[body] > 0 && phase === 'burning' && !reduceMotion
+          ? TURBULENCE[body] * (elapsed > APPROACH_MS ? 1 + Math.min(1.5, (elapsed - APPROACH_MS) / 1500) : elapsed / APPROACH_MS)
           : 0;
 
       // Probe kinematics per phase (world units)
@@ -348,6 +349,7 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
         const oy = (cam.fy - cy) * 0.04;
         ctx.drawImage(nebula, width / 2 - (width / 2) * nz - ox - 12, height / 2 - (height / 2) * nz - oy - 12, width * nz + 24, height * nz + 24);
       }
+      drawGalaxy(ctx, width, height, t, (cam.fx - cx) * 0.06, (cam.fy - cy) * 0.06, warp > 0.01 ? 0.5 * (1 - warp) : 0.5);
       const glowR = (BODY_RADIUS[body] * 5 + 80) * Z;
       const glow = ctx.createRadialGradient(bx, by, 0, bx, by, glowR);
       glow.addColorStop(0, `rgba(${BODY_LIGHT[body]}, ${coasting ? 0.05 : 0.14})`);

@@ -17,7 +17,8 @@
 
 Gravity Slingshot: Grand Tour is a multi-step casino game built on the chain.wtf `ICasinoGameV2`
 standard. The player flies a probe through up to four gravity assists, picking the body for each
-leg: the Moon (80% survive, 1.25x), Jupiter (50%, 2x), a Pulsar (25%, 4x) or a Black hole (12.5%, 8x).
+leg from eight worlds: a Comet (90% survive, 1.11x), the Moon (80%, 1.25x), Neptune (75%, 1.33x),
+Saturn (62.5%, 1.6x), Jupiter (50%, 2x), a Red giant (40%, 2.5x), a Pulsar (25%, 4x) or a Black hole (12.5%, 8x).
 The probe can never
 slingshot the body it just left. After every surviving assist the player ejects to bank the tour
 value or burns onward, and every leg draws fresh on-chain VRF randomness.
@@ -30,7 +31,7 @@ every eject point**. The top route pays 952.32x (1 in 1024).
 
 ### 1. ICasinoGameV2 multi-step session (`contracts/GravitySlingshot.sol`)
 - `quoteCaps` / `quoteRiskParams`: reserve and risk inputs for the best route reachable from the
-  chosen first body (297.6x from the Moon up to 952.32x from the Pulsar or Black hole). `probabilityWad` is the top route's
+  chosen first body (264.53x from the Comet up to 952.32x from the Pulsar or Black hole). `probabilityWad` is the top route's
   probability; `bodyVarianceScaled` is an upper bound over all strategies.
 - `onSessionStart`: launches leg 1 (`WAITING_RANDOMNESS`) and commits the full reserve.
 - `onRandomness`: resolves the leg by rejection-sampled roll; captured settles at 0, the fourth
@@ -44,10 +45,10 @@ every eject point**. The top route pays 952.32x (1 in 1024).
 
 ### 2. Zero modulo bias
 Each leg maps the 256-bit VRF word to `[0, 9999]` by rejection sampling with a bounded re-hash
-loop (at most 8 attempts), then survives when `roll < 8000 / 5000 / 2500 / 1250`.
+loop (at most 8 attempts), then survives when `roll < surviveBps` (9000 for the Comet down to 1250 for the Black hole).
 
 ### 3. Verification
-- `npm test`: 27 passing. This includes an exhaustive check of all 160 legal strategies (every route
+- `npm test`: 34 passing. This includes an exhaustive check of all 3200 legal strategies (every route
   x every eject point) through the contract's real step functions, asserting 93.00% expected return
   in exact integer arithmetic, and end-to-end runs through the casino-sdk `LocalCasinoHost`
   (bust, eject, full 952.32x tour, rejected repeat body, forfeit).

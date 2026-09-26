@@ -384,6 +384,323 @@ def build_blackhole(scene):
     return [disk, halo]
 
 
+# ---------------------------------------------------------------------------------------------
+# Bodies added with the eight-body paytable: Comet, Neptune, Saturn, Red giant, plus the galaxy.
+
+
+def op(tree, operation, a, b=None, clamp=False):
+    """Math node: `a`/`b` are sockets or constants."""
+    node = tree.nodes.new("ShaderNodeMath")
+    node.operation = operation
+    node.use_clamp = clamp
+    for index, value in enumerate((a, b)):
+        if value is None:
+            continue
+        if isinstance(value, (int, float)):
+            node.inputs[index].default_value = value
+        else:
+            tree.links.new(value, node.inputs[index])
+    return node.outputs[0]
+
+
+def remap(tree, value, from_min, from_max, to_min=0.0, to_max=1.0):
+    node = tree.nodes.new("ShaderNodeMapRange")
+    node.clamp = True
+    node.inputs["From Min"].default_value = from_min
+    node.inputs["From Max"].default_value = from_max
+    node.inputs["To Min"].default_value = to_min
+    node.inputs["To Max"].default_value = to_max
+    tree.links.new(value, node.inputs["Value"])
+    return node.outputs["Result"]
+
+
+def rgb(tree, color):
+    node = tree.nodes.new("ShaderNodeRGB")
+    node.outputs[0].default_value = hex_rgba(color)
+    return node.outputs[0]
+
+
+def latitude_of(tree, warped):
+    axes = tree.nodes.new("ShaderNodeSeparateXYZ")
+    tree.links.new(warped, axes.inputs[0])
+    return remap(tree, axes.outputs["Z"], -1.0, 1.0)
+
+
+def neptune_material():
+    mat, tree, out = new_material("Neptune")
+    coord, warped = warped_coords(tree, 0.05, 5.0)
+    bands = ramp(
+        tree,
+        [(0.0, "#172c6e"), (0.18, "#2446b0"), (0.32, "#3a6fd8"), (0.44, "#2f5fcf"),
+         (0.52, "#4b86e8"), (0.62, "#3569d6"), (0.76, "#2a52be"), (0.9, "#203f99"), (1.0, "#172c6e")],
+    )
+    tree.links.new(latitude_of(tree, warped), bands.inputs["Factor"])
+    lat = math.radians(-20)
+    spot = spot_mask(tree, warped, (0.0, -math.cos(lat), math.sin(lat)), (0.3, 0.3, 0.14))
+    color = mix_color(tree, spot, bands.outputs["Color"], rgb(tree, "#0d1a4a"))
+    # Bright methane-ice streaks, stretched along latitude.
+    stretch = tree.nodes.new("ShaderNodeMapping")
+    stretch.inputs["Scale"].default_value = (1.0, 1.0, 12.0)
+    tree.links.new(warped, stretch.inputs["Vector"])
+    streaks = tree.nodes.new("ShaderNodeTexNoise")
+    streaks.inputs["Scale"].default_value = 2.5
+    streaks.inputs["Detail"].default_value = 8.0
+    tree.links.new(stretch.outputs["Vector"], streaks.inputs["Vector"])
+    clouds = op(tree, "MULTIPLY", remap(tree, sock(streaks, "Factor", out=True), 0.66, 0.74), 0.8)
+    color = mix_color(tree, clouds, color, rgb(tree, "#e8f1ff"))
+    rim = tree.nodes.new("ShaderNodeLayerWeight")
+    rim.inputs["Blend"].default_value = 0.3
+    color = mix_color(tree, sock(rim, "Fresnel", out=True), color, rgb(tree, "#9cc9ff"))
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    tree.links.new(color, bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 0.7
+    tree.links.new(bsdf.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def saturn_material():
+    mat, tree, out = new_material("Saturn")
+    coord, warped = warped_coords(tree, 0.03, 5.0)
+    bands = ramp(
+        tree,
+        [(0.0, "#7d7159"), (0.16, "#b9a47c"), (0.28, "#e3d2a6"), (0.37, "#c7a771"), (0.45, "#efe2bd"),
+         (0.55, "#e8d6aa"), (0.63, "#bf9c66"), (0.72, "#e6d7b1"), (0.86, "#b9a47c"), (1.0, "#7d7159")],
+    )
+    tree.links.new(latitude_of(tree, warped), bands.inputs["Factor"])
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    tree.links.new(bands.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 0.8
+    tree.links.new(bsdf.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+RING_INNER = 1.25
+RING_OUTER = 2.35
+
+
+def ring_material():
+    """Saturn's rings on a flat disc: C ring, dense B ring, the Cassini gap, A ring and the Encke gap."""
+    mat, tree, out = new_material("Rings")
+    coord = tree.nodes.new("ShaderNodeTexCoord").outputs["Object"]
+    length = tree.nodes.new("ShaderNodeVectorMath")
+    length.operation = "LENGTH"
+    tree.links.new(coord, length.inputs[0])
+    radius = sock(length, "Value", out=True)
+    across = remap(tree, radius, RING_INNER, RING_OUTER)
+    density = ramp(
+        tree,
+        [(0.0, "#000000"), (0.02, "#303030"), (0.18, "#4a4a4a"), (0.22, "#d8d8d8"), (0.52, "#f2f2f2"),
+         (0.56, "#101010"), (0.62, "#101010"), (0.65, "#b0b0b0"), (0.86, "#a8a8a8"), (0.875, "#1a1a1a"),
+         (0.89, "#a0a0a0"), (0.98, "#707070"), (1.0, "#000000")],
+    )
+    tree.links.new(across, density.inputs["Factor"])
+    # Fine ringlets: a fast sine in radius modulates the opacity by +/-12%.
+    ringlets = op(tree, "MULTIPLY_ADD", op(tree, "SINE", op(tree, "MULTIPLY", radius, 140.0)), 0.12)
+    ringlets.node.inputs[2].default_value = 0.88
+    alpha = op(tree, "MULTIPLY", density.outputs["Color"], ringlets, clamp=True)
+    tint = ramp(tree, [(0.0, "#a8987a"), (0.5, "#dccca6"), (1.0, "#bfae8a")])
+    tree.links.new(across, tint.inputs["Factor"])
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    tree.links.new(tint.outputs["Color"], bsdf.inputs["Base Color"])
+    tree.links.new(alpha, bsdf.inputs["Alpha"])
+    bsdf.inputs["Roughness"].default_value = 0.9
+    tree.links.new(bsdf.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+SATURN_ORTHO = 5.0  # frame spans 5 planet radii so the rings (2.35 r) fit
+
+
+def build_saturn(scene):
+    pivot = bpy.data.objects.new("Axis", None)
+    scene.collection.objects.link(pivot)
+    pivot.rotation_euler = (math.radians(24), 0, math.radians(-10))
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1.0)
+    planet = bpy.context.active_object
+    bpy.ops.object.shade_smooth()
+    planet.scale = (1.0, 1.0, 0.92)  # Saturn is visibly oblate
+    planet.data.materials.append(saturn_material())
+    planet.parent = pivot
+    bpy.ops.mesh.primitive_circle_add(vertices=256, radius=RING_OUTER, fill_type="NGON")
+    rings = bpy.context.active_object
+    rings.data.materials.append(ring_material())
+    rings.parent = pivot
+    return [planet]
+
+
+def redgiant_material():
+    mat, tree, out = new_material("RedGiant")
+    coord, warped = warped_coords(tree, 0.25, 3.0)
+    cells = tree.nodes.new("ShaderNodeTexVoronoi")
+    cells.inputs["Scale"].default_value = 9.0
+    tree.links.new(warped, cells.inputs["Vector"])
+    noise = tree.nodes.new("ShaderNodeTexNoise")
+    noise.inputs["Scale"].default_value = 4.0
+    noise.inputs["Detail"].default_value = 8.0
+    tree.links.new(warped, noise.inputs["Vector"])
+    granules = op(
+        tree,
+        "ADD",
+        op(tree, "MULTIPLY", sock(cells, "Distance", out=True), 0.6),
+        op(tree, "MULTIPLY", sock(noise, "Factor", out=True), 0.5),
+    )
+    heat = ramp(tree, [(0.1, "#5c0f05"), (0.35, "#b3260b"), (0.6, "#f0661c"), (0.85, "#ffb35c"), (1.0, "#fff0c8")])
+    tree.links.new(granules, heat.inputs["Factor"])
+    # Limb darkening: Facing is 0 at the disk center and 1 at the limb.
+    facing = tree.nodes.new("ShaderNodeLayerWeight")
+    facing.inputs["Blend"].default_value = 0.5
+    limb = op(tree, "POWER", op(tree, "SUBTRACT", 1.0, sock(facing, "Facing", out=True)), 0.6)
+    strength = op(tree, "MULTIPLY_ADD", limb, 2.4)
+    strength.node.inputs[2].default_value = 0.5
+    emission = tree.nodes.new("ShaderNodeEmission")
+    tree.links.new(heat.outputs["Color"], emission.inputs["Color"])
+    tree.links.new(strength, emission.inputs["Strength"])
+    tree.links.new(emission.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def comet_rock_material():
+    mat, tree, out = new_material("CometRock")
+    coord = tree.nodes.new("ShaderNodeTexCoord").outputs["Object"]
+    noise = tree.nodes.new("ShaderNodeTexNoise")
+    noise.inputs["Scale"].default_value = 6.0
+    noise.inputs["Detail"].default_value = 10.0
+    tree.links.new(coord, noise.inputs["Vector"])
+    albedo = ramp(tree, [(0.3, "#221d19"), (0.7, "#5b544c")])
+    tree.links.new(sock(noise, "Factor", out=True), albedo.inputs["Factor"])
+    bump = tree.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = 0.8
+    tree.links.new(sock(noise, "Factor", out=True), bump.inputs["Height"])
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    tree.links.new(albedo.outputs["Color"], bsdf.inputs["Base Color"])
+    tree.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    bsdf.inputs["Roughness"].default_value = 1.0
+    tree.links.new(bsdf.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def coma_material():
+    """Soft glowing gas envelope: bright toward the middle, transparent at the edge."""
+    mat, tree, out = new_material("Coma")
+    facing = tree.nodes.new("ShaderNodeLayerWeight")
+    facing.inputs["Blend"].default_value = 0.5
+    glow = op(tree, "POWER", op(tree, "SUBTRACT", 1.0, sock(facing, "Facing", out=True)), 3.0)
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = hex_rgba("#a5f3fc")
+    tree.links.new(op(tree, "MULTIPLY", glow, 0.9), emission.inputs["Strength"])
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    # Thin gas: at most ~30% opaque, so the rocky nucleus shows through the coma.
+    tree.links.new(op(tree, "MULTIPLY", glow, 0.3, clamp=True), mix.inputs[0])
+    tree.links.new(transparent.outputs[0], mix.inputs[1])
+    tree.links.new(emission.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+COMET_ORTHO = 3.0  # nucleus plus coma; the tails are drawn live by the canvas
+
+
+def build_comet(scene):
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=96, ring_count=48, radius=1.0)
+    nucleus = bpy.context.active_object
+    bpy.ops.object.shade_smooth()
+    nucleus.scale = (0.78, 0.58, 0.52)
+    rock = bpy.data.textures.new("CometShape", type="CLOUDS")
+    rock.noise_scale = 0.45
+    displace = nucleus.modifiers.new("Irregular", "DISPLACE")
+    displace.texture = rock
+    displace.strength = 0.35
+    nucleus.data.materials.append(comet_rock_material())
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=64, ring_count=32, radius=1.35)
+    coma = bpy.context.active_object
+    bpy.ops.object.shade_smooth()
+    coma.data.materials.append(coma_material())
+    coma.visible_shadow = False
+    return [nucleus]
+
+
+def galaxy_material():
+    """Two-armed logarithmic spiral (sin(2 theta + k ln r)) with dust lanes, clusters and a warm core."""
+    mat, tree, out = new_material("Galaxy")
+    coord = tree.nodes.new("ShaderNodeTexCoord").outputs["Object"]
+    axes = tree.nodes.new("ShaderNodeSeparateXYZ")
+    tree.links.new(coord, axes.inputs[0])
+    x, y = axes.outputs["X"], axes.outputs["Y"]
+    r = op(tree, "SQRT", op(tree, "ADD", op(tree, "MULTIPLY", x, x), op(tree, "MULTIPLY", y, y)))
+    theta = op(tree, "ARCTAN2", y, x)
+    wobble = tree.nodes.new("ShaderNodeTexNoise")
+    wobble.inputs["Scale"].default_value = 3.0
+    wobble.inputs["Detail"].default_value = 4.0
+    tree.links.new(coord, wobble.inputs["Vector"])
+    twist = op(tree, "MULTIPLY", op(tree, "LOGARITHM", op(tree, "ADD", r, 0.03), 2.718281828), 5.2)
+    phase = op(
+        tree,
+        "ADD",
+        op(tree, "ADD", op(tree, "MULTIPLY", theta, 2.0), twist),
+        op(tree, "MULTIPLY", sock(wobble, "Factor", out=True), 1.2),
+    )
+    arms = op(tree, "POWER", remap(tree, op(tree, "SINE", phase), -0.35, 1.0), 1.15)
+    lanes = remap(tree, op(tree, "SINE", op(tree, "SUBTRACT", phase, 0.7)), 0.6, 1.0)
+    clumps = tree.nodes.new("ShaderNodeTexNoise")
+    clumps.inputs["Scale"].default_value = 14.0
+    clumps.inputs["Detail"].default_value = 10.0
+    tree.links.new(coord, clumps.inputs["Vector"])
+    clumped = op(tree, "MULTIPLY", arms, remap(tree, sock(clumps, "Factor", out=True), 0.3, 0.75, 0.6, 1.3))
+    disk = remap(tree, r, 0.05, 0.98, 1.0, 0.0)
+    core = op(tree, "POWER", remap(tree, r, 0.0, 0.3, 1.0, 0.0), 2.2)
+    haze = op(tree, "MULTIPLY", op(tree, "POWER", disk, 2.0), 0.35)
+    stars = tree.nodes.new("ShaderNodeTexVoronoi")
+    stars.inputs["Scale"].default_value = 160.0
+    tree.links.new(coord, stars.inputs["Vector"])
+    sparkle = remap(tree, sock(stars, "Distance", out=True), 0.06, 0.0)
+    body = op(
+        tree,
+        "MULTIPLY",
+        op(tree, "MULTIPLY", clumped, disk),
+        op(tree, "SUBTRACT", 1.0, op(tree, "MULTIPLY", lanes, 0.55)),
+    )
+    brightness = op(
+        tree,
+        "ADD",
+        op(tree, "ADD", op(tree, "MULTIPLY", core, 3.2), op(tree, "MULTIPLY", body, 2.1)),
+        op(
+            tree,
+            "ADD",
+            op(tree, "MULTIPLY", op(tree, "MULTIPLY", sparkle, arms), op(tree, "MULTIPLY", disk, 2.0)),
+            haze,
+        ),
+    )
+    color = ramp(tree, [(0.0, "#fff1c9"), (0.25, "#ffd79a"), (0.45, "#c9d8ff"), (1.0, "#8fb4ff")])
+    tree.links.new(r, color.inputs["Factor"])
+    hii = remap(tree, sock(clumps, "Factor", out=True), 0.68, 0.8)
+    tinted = mix_color(tree, op(tree, "MULTIPLY", hii, arms), color.outputs["Color"], rgb(tree, "#ff7eb6"))
+    emission = tree.nodes.new("ShaderNodeEmission")
+    tree.links.new(tinted, emission.inputs["Color"])
+    tree.links.new(brightness, emission.inputs["Strength"])
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    tree.links.new(op(tree, "MULTIPLY", brightness, 1.3, clamp=True), mix.inputs[0])
+    tree.links.new(transparent.outputs[0], mix.inputs[1])
+    tree.links.new(emission.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def render_galaxy(size=1024):
+    """Single frame: an inclined spiral galaxy on a transparent background (galaxy.png)."""
+    scene, _ = new_scene(size, 2.1)
+    scene.cycles.samples = 96
+    bpy.ops.mesh.primitive_plane_add(size=2.0)
+    plane = bpy.context.active_object
+    plane.rotation_euler = (math.radians(90 - 32), 0, math.radians(18))
+    plane.data.materials.append(galaxy_material())
+    os.makedirs(OUT, exist_ok=True)
+    scene.render.filepath = os.path.join(OUT, "galaxy.png")
+    bpy.ops.render.render(write_still=True)
+    print(f"rendered galaxy into {scene.render.filepath}")
+
+
 BLACKHOLE_ORTHO = 6.2  # frame spans 6.2 horizon radii (the disk reaches 2.8)
 
 BODIES = {
@@ -391,6 +708,10 @@ BODIES = {
     "jupiter": {"size": 256, "tilt": 10, "material": jupiter_material, "lit": True},
     "pulsar": {"size": 128, "tilt": 30, "material": pulsar_material, "lit": False},
     "blackhole": {"size": 320, "ortho": BLACKHOLE_ORTHO, "build": build_blackhole, "lit": False},
+    "comet": {"size": 192, "ortho": COMET_ORTHO, "build": build_comet, "lit": True},
+    "neptune": {"size": 192, "tilt": 28, "material": neptune_material, "lit": True},
+    "saturn": {"size": 320, "ortho": SATURN_ORTHO, "build": build_saturn, "lit": True},
+    "redgiant": {"size": 256, "tilt": 12, "material": redgiant_material, "lit": False},
 }
 
 
@@ -421,3 +742,5 @@ if __name__ == "__main__":
     for body_name, body_spec in BODIES.items():
         if not ONLY or body_name in ONLY:
             render_body(body_name, body_spec)
+    if not ONLY or "galaxy" in ONLY:
+        render_galaxy()

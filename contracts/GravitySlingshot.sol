@@ -17,16 +17,22 @@ import {
  *         banks the tour value, or burns onward to the next body.
  *
  *           body         survive   leg multiplier
- *           Moon           80%        1.25x
+ *           Comet          90%        10/9x  (1.11x)
+ *           Moon           80%        5/4x   (1.25x)
+ *           Neptune        75%        4/3x   (1.33x)
+ *           Saturn         62.5%      8/5x   (1.6x)
  *           Jupiter        50%        2x
+ *           Red giant      40%        5/2x   (2.5x)
  *           Pulsar         25%        4x
  *           Black hole     12.5%      8x
  *
- *         survive * multiplier = 1 on every leg, so each leg is a fair bet and the tour
- *         value is a martingale. The 7% house edge is applied once, at settlement:
+ *         survive * multiplier = 1 exactly on every leg, so each leg is a fair bet and the
+ *         tour value is a martingale. The 7% house edge is applied once, at settlement:
  *           payout = wager * product(leg multipliers) * 0.93
- *         Expected payout is therefore exactly 93% of the wager under ANY route or
- *         stopping rule. The top route (Pulsar, Black hole, Pulsar, Black hole) pays 952.32x.
+ *         Expected payout is therefore 93% of the wager under ANY route or stopping rule
+ *         (settlement floors to the wei, never in the player's favor). The top route
+ *         (Pulsar, Black hole, Pulsar, Black hole) pays 952.32x; every other body is at
+ *         most 4x, so adding bodies never raises the cap.
  * @dev A strategy can only condition on "survived so far", so every strategy is a fixed
  *      route plus an eject point. Tests enumerate all of them through these handlers.
  */
@@ -38,13 +44,17 @@ contract GravitySlingshot is ICasinoGameV2 {
   uint256 public constant TOUR_STATE_BYTES = 352; // 11 ABI words, see _encodeTour
 
   uint8 public constant MAX_LEGS = 4;
-  uint8 public constant BODY_COUNT = 4;
+  uint8 public constant BODY_COUNT = 8;
   uint8 public constant NO_BODY = 255;
 
   uint8 public constant MOON = 0;
   uint8 public constant JUPITER = 1;
   uint8 public constant PULSAR = 2;
   uint8 public constant BLACK_HOLE = 3;
+  uint8 public constant COMET = 4;
+  uint8 public constant NEPTUNE = 5;
+  uint8 public constant SATURN = 6;
+  uint8 public constant RED_GIANT = 7;
 
   uint8 public constant ACTION_LAUNCH = 1;
   uint8 public constant ACTION_EJECT = 2;
@@ -84,15 +94,23 @@ contract GravitySlingshot is ICasinoGameV2 {
     if (body == JUPITER) return 5_000;
     if (body == PULSAR) return 2_500;
     if (body == BLACK_HOLE) return 1_250;
+    if (body == COMET) return 9_000;
+    if (body == NEPTUNE) return 7_500;
+    if (body == SATURN) return 6_250;
+    if (body == RED_GIANT) return 4_000;
     revert GravitySlingshot__InvalidBody(body);
   }
 
-  /// @notice Leg multiplier as an exact fraction num / den.
+  /// @notice Leg multiplier as an exact fraction num / den (surviveBps * num == 10_000 * den).
   function legMultiplier(uint8 body) public pure returns (uint256 num, uint256 den) {
     if (body == MOON) return (5, 4);
     if (body == JUPITER) return (2, 1);
     if (body == PULSAR) return (4, 1);
     if (body == BLACK_HOLE) return (8, 1);
+    if (body == COMET) return (10, 9);
+    if (body == NEPTUNE) return (4, 3);
+    if (body == SATURN) return (8, 5);
+    if (body == RED_GIANT) return (5, 2);
     revert GravitySlingshot__InvalidBody(body);
   }
 
@@ -126,18 +144,24 @@ contract GravitySlingshot is ICasinoGameV2 {
 
   /// @notice Highest-paying legal route for a given first body (verified by enumeration in tests).
   function topRoute(uint8 firstBody) public pure returns (uint8[4] memory route) {
-    if (firstBody == MOON) return [MOON, BLACK_HOLE, PULSAR, BLACK_HOLE]; // 320x
-    if (firstBody == JUPITER) return [JUPITER, BLACK_HOLE, PULSAR, BLACK_HOLE]; // 512x
-    if (firstBody == PULSAR) return [PULSAR, BLACK_HOLE, PULSAR, BLACK_HOLE]; // 1024x
     if (firstBody == BLACK_HOLE) return [BLACK_HOLE, PULSAR, BLACK_HOLE, PULSAR]; // 1024x
-    revert GravitySlingshot__InvalidBody(firstBody);
+    if (firstBody >= BODY_COUNT) revert GravitySlingshot__InvalidBody(firstBody);
+    // Every other first body continues Black hole, Pulsar, Black hole: 256x times its own leg
+    // (Comet 284.4x, Moon 320x, Neptune 341.3x, Saturn 409.6x, Jupiter 512x, Red giant 640x,
+    // Pulsar 1024x).
+    return [firstBody, BLACK_HOLE, PULSAR, BLACK_HOLE];
   }
 
-  /// @notice Largest route multiplier (= E[M^2]) among routes that never pay the top tier.
+  /// @notice Upper bound (rounded up) on the route multiplier, which equals E[M^2] for a fixed
+  ///         route, among routes that never pay the top tier. Found by enumeration in tests.
   function nonTopSecondMoment(uint8 firstBody) public pure returns (uint256) {
-    if (firstBody == MOON) return 160;
-    if (firstBody == JUPITER) return 256;
-    if (firstBody == PULSAR || firstBody == BLACK_HOLE) return 512;
+    if (firstBody == COMET) return 178; // 177.78: Comet, Black hole, Red giant, Black hole
+    if (firstBody == MOON) return 200;
+    if (firstBody == NEPTUNE) return 214; // 213.33
+    if (firstBody == SATURN) return 256;
+    if (firstBody == JUPITER) return 320;
+    if (firstBody == RED_GIANT) return 400;
+    if (firstBody == PULSAR || firstBody == BLACK_HOLE) return 640;
     revert GravitySlingshot__InvalidBody(firstBody);
   }
 

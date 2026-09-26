@@ -1,6 +1,6 @@
 import React from 'react';
 import { X } from 'lucide-react';
-import { BODIES, type BodyId } from '../lib/slingshot';
+import { BODIES, BODY_ORDER, type BodyId } from '../lib/slingshot';
 import { BodyArt } from './BodyArt';
 
 const HELP_KEY = 'grand-tour-help-seen';
@@ -25,7 +25,7 @@ function markHelpSeen() {
 const STEPS = [
   {
     title: 'Pick a body',
-    text: 'Each assist is a gamble. Safe bodies pay a little, wild ones pay a lot.',
+    text: 'Eight worlds across the galaxy, from a gentle comet to a black hole. Each assist is a gamble: safe bodies pay a little, wild ones pay a lot.',
   },
   {
     title: 'Survive, then choose',
@@ -49,7 +49,7 @@ export function HowToPlay({ open, onClose }: { open: boolean; onClose: () => voi
         role="dialog"
         aria-modal
         aria-label="How to play"
-        className="relative w-full max-w-lg rounded-2xl border border-nebula-500/40 bg-hull-900 shadow-2xl shadow-nebula-600/20 p-6 animate-pop"
+        className="relative w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border border-nebula-500/40 bg-hull-900 shadow-2xl shadow-nebula-600/20 p-6 animate-pop"
         onClick={e => e.stopPropagation()}
       >
         <button onClick={close} className="absolute top-3 right-3 p-1.5 rounded-lg text-hull-400 hover:text-hull-100 hover:bg-hull-800" aria-label="Close">
@@ -71,7 +71,7 @@ export function HowToPlay({ open, onClose }: { open: boolean; onClose: () => voi
           ))}
         </ol>
         <div className="mt-4 grid grid-cols-4 gap-2">
-          {BODIES.map(b => (
+          {BODY_ORDER.map(id => BODIES[id]).map(b => (
             <div key={b.id} className="rounded-lg border border-hull-700 bg-hull-850 p-2 flex flex-col items-center text-center">
               <BodyArt body={b.id as BodyId} size={40} />
               <div className="text-xs font-semibold text-hull-100 mt-1">{b.name}</div>
