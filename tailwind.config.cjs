@@ -34,9 +34,14 @@ module.exports = {
           '60%': { transform: 'scale(1.08)', opacity: '1' },
           '100%': { transform: 'scale(1)', opacity: '1' },
         },
+        strobe: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.25' },
+        },
       },
       animation: {
         pop: 'pop 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both',
+        strobe: 'strobe 420ms steps(2, jump-none) infinite',
       },
     },
   },

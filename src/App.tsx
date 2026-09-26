@@ -21,7 +21,34 @@ import { BodyArt } from './components/BodyArt';
 import { HowToPlay, helpAlreadySeen } from './components/HowToPlay';
 import { orbitalAudio } from './audio/orbitalAudio';
 import { spaceScore, type Intensity } from './audio/spaceScore';
-import { AlertTriangle, CheckCircle2, HelpCircle, History, Music, Orbit, Rocket, Volume2, VolumeX } from 'lucide-react';
+import { AlertTriangle, Award, CheckCircle2, HelpCircle, History, Music, Orbit, Rocket, RotateCcw, Tv, Volume2, VolumeX, X } from 'lucide-react';
+import { ROUTE_PRESETS, missionDesignation, paidMultiplier, presetSummary, telemetry } from './lib/flight';
+import { BADGES, loadCareer, rankFor, recordTour } from './lib/career';
+import { Blackbox } from './components/Blackbox';
+import { CareerModal } from './components/CareerModal';
+import { CRT_FILTER_ID, CrtLayer, FlightGauges } from './components/Instruments';
+import { SystemMap } from './components/SystemMap';
+import { TitleScreen, titleAlreadySeen } from './components/TitleScreen';
+
+const BODY_IDS: BodyId[] = [0, 1, 2, 3];
+const CRT_KEY = 'grand-tour-crt';
+
+function readFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1';
+  } catch (err: unknown) {
+    console.warn(`Preference ${key} unavailable:`, err);
+    return false;
+  }
+}
+
+function writeFlag(key: string, on: boolean) {
+  try {
+    window.localStorage.setItem(key, on ? '1' : '0');
+  } catch (err: unknown) {
+    console.warn(`Preference ${key} not saved:`, err);
+  }
+}
 
 const BODY_TONE: Record<BodyId, { text: string; ring: string; chip: string }> = {
   0: { text: 'text-slate-200', ring: 'border-slate-400/70 bg-slate-400/10', chip: 'bg-slate-300/15 text-slate-200' },
@@ -134,6 +161,7 @@ function BodyCard({
   selected = false,
   disabled = false,
   onClick,
+  onHover,
   pays,
   note,
 }: {
@@ -141,6 +169,7 @@ function BodyCard({
   selected?: boolean;
   disabled?: boolean;
   onClick: () => void;
+  onHover?: (hovering: boolean) => void;
   pays: string;
   note?: string;
 }) {
@@ -149,6 +178,8 @@ function BodyCard({
   return (
     <button
       onClick={onClick}
+      onMouseEnter={() => onHover?.(true)}
+      onMouseLeave={() => onHover?.(false)}
       disabled={disabled}
       className={`relative rounded-xl border p-2 text-left flex items-center gap-2 transition-all ${
         disabled ? 'border-hull-800 bg-hull-900 opacity-40 cursor-not-allowed' : selected ? `${tone.ring} ring-1 ring-flare-400/50` : 'border-hull-700 bg-hull-850 hover:border-hull-600 hover:-translate-y-0.5'
@@ -210,6 +241,20 @@ export default function App() {
   const [sfxOn, setSfxOn] = useState(true);
   const [musicOn, setMusicOn] = useState(() => spaceScore.isEnabled());
   const [helpOpen, setHelpOpen] = useState(() => !helpAlreadySeen());
+  const [plan, setPlan] = useState<BodyId[]>([]);
+  const [lastRoute, setLastRoute] = useState<BodyId[]>([]);
+  const [target, setTarget] = useState<BodyId | null>(null);
+  const [hovered, setHovered] = useState<BodyId | null>(null);
+  const [volume, setVolume] = useState(1);
+  const [career, setCareer] = useState(() => loadCareer());
+  const [careerOpen, setCareerOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [atPeriapsis, setAtPeriapsis] = useState(false);
+  const [jitter, setJitter] = useState(0);
+  const [titleOpen, setTitleOpen] = useState(() => !titleAlreadySeen());
+  const [crtOn, setCrtOn] = useState(() => readFlag(CRT_KEY));
+  const pilot = rankFor(career.lightYears);
+  const recordedRound = useRef(0);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
 
   const decimals = snapshot?.token.decimals ?? 18;
@@ -245,6 +290,52 @@ export default function App() {
   const cashValue = round && tour ? tourPayout(round.wager, survived) : 0n;
   const nextBodies = round && tour && !round.busy ? legalNextBodies(tour) : [];
   const currentBody = tour ? (tour.route[tour.legs - 1] as BodyId) : selected;
+  const flown = tour ? flownRoute(tour) : [];
+  const followsPlan = plan.length > 0 && flown.every((b, i) => plan[i] === b);
+  const planNext = followsPlan ? (plan[flown.length] as BodyId | undefined) : undefined;
+  const burnTarget: BodyId | null =
+    target !== null && nextBodies.includes(target) ? target : planNext !== undefined && nextBodies.includes(planNext) ? planNext : null;
+  const missionRoute: number[] = round && tour ? (followsPlan ? plan : flown) : plan.length ? plan : [selected];
+  const cruising = inTour && tour?.status === TourStatus.CRUISING;
+  const previewBody: BodyId | null = !round || round.revealed
+    ? (hovered ?? selected)
+    : cruising
+      ? (hovered !== null && nextBodies.includes(hovered) ? hovered : burnTarget)
+      : null;
+  const preview = previewBody === null
+    ? null
+    : { body: previewBody, label: `${mult(paidMultiplier(cruising ? [...survived, previewBody] : [previewBody]))} | ${pct(BODIES[previewBody].surviveBps)}` };
+  const tel = telemetry(
+    currentBody,
+    !tour
+      ? 'idle'
+      : tour.status === TourStatus.CAPTURED
+        ? 'lost'
+        : !inTour
+          ? 'idle'
+          : tour.status === TourStatus.BURNING
+            ? (atPeriapsis ? 'periapsis' : 'approach')
+            : 'coast',
+    jitter,
+  );
+  // System map: while planning, the chain is the plan (or the chosen first body); in flight, the legs survived.
+  const mapBase: BodyId[] = inTour ? survived : plan.length ? plan : [selected];
+  const mapLegal: BodyId[] = inTour
+    ? nextBodies
+    : mapBase.length < MAX_LEGS
+      ? BODY_IDS.filter(b => b !== mapBase[mapBase.length - 1])
+      : [];
+  const liveRow = round?.sessionKey ? snapshot?.sessions.items.find(item => item.sessionKey === round.sessionKey) : undefined;
+  const vrfWords = liveRow?.raw.randomnessRequests?.map(r => r.randomness) ?? (liveRow?.raw.randomness ? [liveRow.raw.randomness] : []);
+  const verifyVrf =
+    hostApi?.getRandomnessVerification && round?.sessionId
+      ? async () => {
+          const v = await hostApi.getRandomnessVerification!({ sessionId: round.sessionId! });
+          if (!v.supported) return 'This host does not support VRF verification yet.';
+          const ok = v.requests.filter(r => r.valid).length;
+          return `${ok} of ${v.requests.length} VRF proofs verified on chain ${v.chainId}.`;
+        }
+      : undefined;
 
   const launchBlocker = !walletReady
     ? 'Connect your wallet in the host'
@@ -256,10 +347,41 @@ export default function App() {
           ? `Max bet here is ${fmt(maxWager)} ${symbol}`
           : null;
 
+  const previewKey = preview ? `${preview.body}:${preview.label}` : '';
+  const chassis = pilot.index;
   const scene: CanvasScene = useMemo(() => {
-    if (!round || !tour) return { key: sceneKey, phase: 'idle', body: selected };
-    return { key: sceneKey, phase: canvasPhase(tour), body: tour.route[tour.legs - 1] as BodyId };
-  }, [round, tour, sceneKey, selected]);
+    if (!round || !tour) return { key: sceneKey, phase: 'idle', body: selected, preview, chassis };
+    return { key: sceneKey, phase: canvasPhase(tour), body: tour.route[tour.legs - 1] as BodyId, preview, chassis };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round, tour, sceneKey, selected, previewKey, chassis]);
+
+  // Periapsis telemetry: flag closest approach after the approach animation, jitter the g-load.
+  useEffect(() => {
+    setAtPeriapsis(false);
+    setTarget(null);
+    if (tour?.status !== TourStatus.BURNING) return;
+    const reach = setTimeout(() => setAtPeriapsis(true), 1100);
+    const shakeTimer = setInterval(() => setJitter(Math.random() * 2 - 1), 150);
+    return () => {
+      clearTimeout(reach);
+      clearInterval(shakeTimer);
+    };
+  }, [tour?.status, tour?.legs]);
+
+  // Career: fold each finished tour in once, remember its route for re-fly, toast new badges.
+  useEffect(() => {
+    if (!round?.revealed || round.aborted || recordedRound.current === round.id) return;
+    recordedRound.current = round.id;
+    const route = flownRoute(round.shown);
+    setLastRoute(plan.length && route.every((b, i) => plan[i] === b) ? plan : route);
+    const { career: next, unlocked } = recordTour(career, round.shown, round.wager);
+    setCareer(next);
+    if (unlocked.length) {
+      setToast(`Badge unlocked: ${unlocked.map(id => BADGES.find(b => b.id === id)?.name).join(', ')}`);
+      setTimeout(() => setToast(null), 4500);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round?.revealed, round?.id]);
 
   // Music: starts on the first gesture (browser autoplay rules), then follows the tour.
   useEffect(() => {
@@ -283,12 +405,16 @@ export default function App() {
     lastCue.current = cue;
     if (tour.status === TourStatus.BURNING) {
       orbitalAudio.playGravityWellHum();
+      orbitalAudio.startApproachPings(1100);
       setTimeout(() => orbitalAudio.playPeriapsisSweep(), 900);
     } else if (tour.status === TourStatus.CAPTURED) {
-      orbitalAudio.playCaptureFailure();
+      orbitalAudio.stopPings();
+      orbitalAudio.playCaptureCollapse();
       spaceScore.cue('capture');
     } else {
-      orbitalAudio.playEscapeSuccess();
+      orbitalAudio.stopPings();
+      orbitalAudio.playSonicBoom();
+      if (tour.status !== TourStatus.CRUISING) orbitalAudio.playEscapeSuccess();
       spaceScore.cue(tour.status === TourStatus.CRUISING ? 'survive' : tour.status === TourStatus.EJECTED ? 'bank' : 'complete');
     }
   }, [tour, sceneKey]);
@@ -297,11 +423,45 @@ export default function App() {
     if (inTour) return;
     if (round?.revealed) reset();
     setSelected(body);
+    if (plan[0] !== body) setPlan([]);
     orbitalAudio.playBlip(500 + body * 180);
+  };
+  const choosePreset = (route: BodyId[]) => {
+    if (inTour) return;
+    if (round?.revealed) reset();
+    setPlan(route);
+    setSelected(route[0]);
+    orbitalAudio.playBlip(760);
   };
   const doLaunch = () => {
     if (inTour || launchBlocker || wager === null) return;
     void start(selected, wager);
+  };
+  const reFly = () => {
+    if (inTour || !lastRoute.length || wager === null || launchBlocker) return;
+    if (round?.revealed) reset();
+    setPlan(lastRoute);
+    setSelected(lastRoute[0]);
+    void start(lastRoute[0], wager);
+  };
+  const rearm = () => {
+    if (inTour) return;
+    if (round?.revealed) reset();
+    if (lastRoute.length && plan.join() !== lastRoute.join()) {
+      setPlan(lastRoute);
+      setSelected(lastRoute[0]);
+    } else setPlan([]);
+  };
+  // Map click: while planning it chains another leg onto the plan; in flight it aims the next burn.
+  const pickOnMap = (body: BodyId) => {
+    if (inTour) {
+      if (nextBodies.includes(body)) setTarget(body);
+      return;
+    }
+    if (round?.revealed) reset();
+    setSelected(mapBase[0]);
+    setPlan([...mapBase, body]);
+    orbitalAudio.playBlip(620 + body * 120);
   };
   const scaleWager = (factor: number) => {
     const current = Number(wagerInput) || 0;
@@ -312,15 +472,20 @@ export default function App() {
   // Keyboard: 1-4 pick or burn a body, E ejects, Enter launches.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || helpOpen) return;
+      if (e.target instanceof HTMLInputElement || helpOpen || careerOpen || titleOpen) return;
       const n = Number(e.key);
+      const key = e.key.toLowerCase();
       if (n >= 1 && n <= BODIES.length) {
         const body = (n - 1) as BodyId;
         if (inTour) {
-          if (nextBodies.includes(body)) void launch(body);
+          if (nextBodies.includes(body)) setTarget(body);
         } else pickBody(body);
-      } else if (e.key.toLowerCase() === 'e' && nextBodies.length > 0) void eject();
-      else if (e.key === 'Enter' && !inTour) doLaunch();
+      } else if ((key === 'e' || key === 'b') && nextBodies.length > 0) void eject();
+      else if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        if (!inTour) doLaunch();
+        else if (burnTarget !== null) void launch(burnTarget);
+      } else if (key === 'r') rearm();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -377,6 +542,37 @@ export default function App() {
           >
             {sfxOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </IconButton>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            aria-label="Volume"
+            title="Volume"
+            onChange={e => {
+              const v = Number(e.target.value);
+              setVolume(v);
+              orbitalAudio.setVolume(v);
+              spaceScore.setVolume(v);
+            }}
+            className="hidden md:block w-20 accent-orange-400"
+          />
+          <span className="hidden sm:inline-flex">
+            <IconButton
+              title={crtOn ? 'CRT display on' : 'CRT display off'}
+              active={crtOn}
+              onClick={() => {
+                setCrtOn(!crtOn);
+                writeFlag(CRT_KEY, !crtOn);
+              }}
+            >
+              <Tv className="w-4 h-4" />
+            </IconButton>
+          </span>
+          <IconButton title={`Pilot career: ${pilot.rank.name}`} onClick={() => setCareerOpen(true)}>
+            <Award className="w-4 h-4" />
+          </IconButton>
           <IconButton title="How to play" onClick={() => setHelpOpen(true)}>
             <HelpCircle className="w-4 h-4" />
           </IconButton>
@@ -386,17 +582,31 @@ export default function App() {
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
         {/* The game scene keeps its own colors. */}
         <section className="relative flex-1 min-w-0 h-[46vh] min-h-[320px] lg:h-auto lg:min-h-0 overflow-hidden bg-gray-950">
+          <div className="absolute inset-0" style={crtOn ? { filter: `url(#${CRT_FILTER_ID})` } : undefined}>
           <TourCanvas scene={scene} />
-          <div className="absolute top-3 left-3 text-[11px] space-y-1 pointer-events-none">
-            <div className="tracking-widest text-gray-400">
-              LEG {tour && inTour ? Math.min(tour.legs, MAX_LEGS) : 0} / {MAX_LEGS}
-            </div>
-            <div className={`flex items-center gap-1.5 ${BODY_TONE[currentBody].text}`}>
-              <BodyArt body={currentBody} size={16} />
-              {BODIES[currentBody].name} {pct(BODIES[currentBody].surviveBps)} / {BODIES[currentBody].multLabel}
+          <div className="absolute top-4 left-4 text-[11px] pointer-events-none">
+            <div className="rounded-xl bg-black/45 border border-cyan-300/15 backdrop-blur-[2px] px-2.5 py-2 shadow-[0_0_24px_rgba(34,211,238,0.08)]">
+              <div className="flex items-center justify-between gap-3 text-[10px] tracking-widest">
+                <span className="text-gray-400">
+                  LEG {tour && inTour ? Math.min(tour.legs, MAX_LEGS) : 0} / {MAX_LEGS}
+                </span>
+                <span className="text-cyan-300 truncate max-w-[130px]">{missionDesignation(missionRoute)}</span>
+              </div>
+              <div className={`mt-1 flex items-center gap-1.5 ${BODY_TONE[currentBody].text}`}>
+                <BodyArt body={currentBody} size={16} />
+                {BODIES[currentBody].name} {pct(BODIES[currentBody].surviveBps)} / {BODIES[currentBody].multLabel}
+              </div>
+              <div className="hidden md:block lg:hidden min-[1200px]:block mt-1">
+                <FlightGauges velocityKms={tel.velocityKms} g={tel.g} />
+              </div>
+              <div className="hidden sm:block md:hidden lg:block min-[1200px]:hidden mt-1 space-y-0.5 text-[10px] text-gray-300 tabular-nums w-40">
+                <div className="flex justify-between"><span className="text-gray-500">VELOCITY</span>{tel.velocity}</div>
+                <div className="flex justify-between"><span className="text-gray-500">G-LOAD</span><span className={atPeriapsis ? 'text-amber-300' : ''}>{tel.gLoad}</span></div>
+              </div>
+              <div className="hidden sm:flex justify-between gap-3 text-[10px] tabular-nums"><span className="text-gray-500">PERIAPSIS</span><span className="text-gray-300">{tel.altitude}</span></div>
             </div>
           </div>
-          <div className="absolute top-3 inset-x-0 flex flex-col items-center pointer-events-none">
+          <div className="absolute top-3 inset-x-0 flex flex-col items-end pr-4 sm:items-center sm:pr-0 pointer-events-none">
             <div className="text-[10px] tracking-[0.3em] text-gray-400">{round ? 'TOUR VALUE' : 'BEST TOUR'}</div>
             <div key={`v-${survived.length}-${round ? 1 : 0}`} className="font-display text-3xl sm:text-4xl text-emerald-300 drop-shadow-[0_0_18px_rgba(52,211,153,0.35)] animate-pop tabular-nums">
               {round ? mult(routeMultiplier(survived)) : mult(maxPayoutMultiplier(selected))}
@@ -421,6 +631,8 @@ export default function App() {
             </div>
           )}
           <Trajectory tour={inTour || round ? tour : null} />
+          </div>
+          <CrtLayer on={crtOn} />
         </section>
 
         <aside className="lg:w-[380px] shrink-0 flex flex-col min-h-0 border-t lg:border-t-0 lg:border-l border-hull-700 bg-hull-900/95">
@@ -465,6 +677,26 @@ export default function App() {
                   <div className="text-[11px] tracking-widest text-hull-400">
                     OR BURN ONWARD {tour.legs < MAX_LEGS ? `| LEG ${tour.legs + 1} OF ${MAX_LEGS}` : ''}
                   </div>
+                  {burnTarget !== null && (
+                    <button
+                      onClick={() => void launch(burnTarget)}
+                      disabled={round.busy !== null}
+                      className="w-full py-2 rounded-xl border border-nebula-400/60 bg-nebula-500/10 text-nebula-300 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-nebula-500/20"
+                    >
+                      BURN TO {BODIES[burnTarget].name.toUpperCase()} {mult(paidMultiplier([...survived, burnTarget]))} <Kbd>SPACE</Kbd>
+                    </button>
+                  )}
+                  {tour.legs < MAX_LEGS && (
+                    <SystemMap
+                      base={mapBase}
+                      legal={mapLegal}
+                      hovered={hovered}
+                      onHover={setHovered}
+                      onPick={pickOnMap}
+                      title="NEXT ASSIST"
+                      hint="click to aim, SPACE to burn"
+                    />
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     {BODIES.map(b => {
                       const allowed = nextBodies.includes(b.id);
@@ -472,6 +704,8 @@ export default function App() {
                         <BodyCard
                           key={b.id}
                           body={b.id}
+                          selected={burnTarget === b.id}
+                          onHover={h => setHovered(h ? b.id : null)}
                           disabled={!allowed || round.busy !== null}
                           onClick={() => void launch(b.id)}
                           pays={allowed ? mult(routeMultiplier([...survived, b.id])) : b.multLabel}
@@ -490,9 +724,44 @@ export default function App() {
                   <div className="text-[11px] tracking-[0.3em] text-hull-400">FLIGHT PLAN</div>
                   <div className="text-[10px] text-hull-600">pick your first assist</div>
                 </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {ROUTE_PRESETS.map(preset => (
+                    <button
+                      key={preset.name}
+                      onClick={() => choosePreset(preset.route)}
+                      className={`rounded-lg border px-2 py-1.5 text-left ${
+                        plan.join() === preset.route.join() ? 'border-flare-400 bg-flare-500/10' : 'border-hull-700 bg-hull-850 hover:border-hull-600'
+                      }`}
+                    >
+                      <div className="text-[11px] font-semibold truncate">{preset.name}</div>
+                      <div className="text-[9px] text-hull-400 truncate">{presetSummary(preset.route)}</div>
+                    </button>
+                  ))}
+                </div>
+                {plan.length > 1 && (
+                  <div className="flex items-center gap-1.5 rounded-lg border border-hull-700 bg-hull-850 px-2 py-1.5 text-[11px]">
+                    <span className="text-hull-400">PLAN</span>
+                    {plan.map((b, i) => (
+                      <BodyArt key={i} body={b} size={20} />
+                    ))}
+                    <span className="ml-auto text-mint-300 tabular-nums">{mult(paidMultiplier(plan))}</span>
+                    <button onClick={() => setPlan([])} aria-label="Clear plan" className="text-hull-400 hover:text-hull-100">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                <SystemMap
+                  base={mapBase}
+                  legal={mapLegal}
+                  hovered={hovered}
+                  onHover={setHovered}
+                  onPick={pickOnMap}
+                  title="SYSTEM MAP"
+                  hint={mapLegal.length ? 'click bodies to chain legs' : 'four legs planned'}
+                />
                 <div className="grid grid-cols-2 gap-2">
                   {BODIES.map(b => (
-                    <BodyCard key={b.id} body={b.id} selected={selected === b.id} onClick={() => pickBody(b.id)} pays={`${b.multLabel} PAYS`} />
+                    <BodyCard key={b.id} body={b.id} selected={selected === b.id} onClick={() => pickBody(b.id)} onHover={h => setHovered(h ? b.id : null)} pays={`${b.multLabel} PAYS`} />
                   ))}
                 </div>
                 <div className="rounded-xl border border-hull-700 bg-hull-850 p-3">
@@ -544,19 +813,35 @@ export default function App() {
                     Best tour from {BODIES[selected].name}: <span className="text-mint-300">{mult(maxPayoutMultiplier(selected))}</span>
                   </div>
                 </div>
+                {round?.revealed && lastRoute.length > 0 && (
+                  <button
+                    onClick={reFly}
+                    disabled={launchBlocker !== null}
+                    className="w-full py-2.5 rounded-xl border border-flare-400/60 bg-flare-500/10 text-flare-200 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-flare-500/20 disabled:opacity-40"
+                  >
+                    <RotateCcw className="w-4 h-4" /> RE-FLY LAST ROUTE
+                    <span className="flex gap-0.5">
+                      {lastRoute.map((b, i) => (
+                        <BodyArt key={i} body={b} size={16} />
+                      ))}
+                    </span>
+                    <Kbd>R</Kbd>
+                  </button>
+                )}
                 <button
                   onClick={doLaunch}
                   disabled={launchBlocker !== null}
-                  className="w-full py-4 rounded-xl font-display text-sm tracking-wider flex items-center justify-center gap-2 bg-gradient-to-r from-nebula-500 to-flare-500 hover:brightness-110 text-white shadow-lg shadow-nebula-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className={`relative overflow-hidden w-full py-4 rounded-xl font-display text-sm tracking-wider flex items-center justify-center gap-2 bg-gradient-to-r from-nebula-500 to-flare-500 hover:brightness-110 text-white shadow-lg shadow-nebula-500/30 disabled:opacity-40 disabled:cursor-not-allowed ${launchBlocker ? '' : 'btn-shimmer'}`}
                 >
                   <Rocket className="w-5 h-5" />
                   {launchBlocker ?? `LAUNCH TO ${BODIES[selected].name.toUpperCase()}`}
-                  {!launchBlocker && <Kbd>ENTER</Kbd>}
+                  {!launchBlocker && <Kbd>SPACE</Kbd>}
                 </button>
               </>
             )}
 
             <FlightLog history={history} fmt={fmt} symbol={symbol} />
+            <Blackbox tour={round ? tour : null} words={vrfWords} demo={!hostApi} onVerify={verifyVrf} />
             <p className="text-[10px] leading-relaxed text-hull-600">
               Every route returns 93% on average, so your route only sets the risk. Top route: Pulsar, Black hole, Pulsar, Black hole for {mult(TOP_PAYOUT)} (1 in 1024).
             </p>
@@ -564,7 +849,22 @@ export default function App() {
         </aside>
       </div>
 
+      <TitleScreen
+        open={titleOpen}
+        onBegin={() => {
+          setTitleOpen(false);
+          spaceScore.start();
+        }}
+        rankName={pilot.rank.name}
+        tours={career.tours}
+      />
       <HowToPlay open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <CareerModal open={careerOpen} onClose={() => setCareerOpen(false)} career={career} />
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl border border-flare-400/60 bg-hull-900 text-flare-200 text-sm font-semibold shadow-lg shadow-flare-500/20 animate-pop flex items-center gap-2">
+          <Award className="w-4 h-4" /> {toast}
+        </div>
+      )}
     </div>
   );
 }

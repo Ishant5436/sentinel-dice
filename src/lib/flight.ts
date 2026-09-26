@@ -39,21 +39,41 @@ export function missionDesignation(route: readonly number[]): string {
 }
 
 export const G_LOAD: Record<BodyId, number> = { 0: 1.2, 1: 24.8, 2: 186.0, 3: 450.0 };
+/** Periapsis speed per body in km/s; the Black hole slingshot runs at 0.8c. */
+export const PERIAPSIS_SPEED: Record<BodyId, number> = { 0: 11.2, 1: 44.8, 2: 112.5, 3: 240_000 };
+export const LIGHT_SPEED_KMS = 299_792;
+const PARKING_SPEED = 7.8;
 const PERIAPSIS_ALTITUDE: Record<BodyId, string> = { 0: '110 km', 1: '4,200 km', 2: '38 km', 3: '1.5 Rs' };
 export const LIGHT_YEARS: Record<BodyId, number> = { 0: 1.3, 1: 4.2, 2: 12.7, 3: 27.0 };
 
-export type TelemetryPhase = 'idle' | 'approach' | 'periapsis' | 'coast';
+export type TelemetryPhase = 'idle' | 'approach' | 'periapsis' | 'coast' | 'lost';
 
 export interface Telemetry {
+  velocityKms: number;
+  g: number;
   velocity: string;
   gLoad: string;
   altitude: string;
 }
 
-/** Cosmetic flight telemetry. Velocity grows with the tour multiplier; g-load peaks at periapsis. */
-export function telemetry(body: BodyId, grossMultiplier: number, phase: TelemetryPhase, jitter = 0): Telemetry {
-  const velocity = 11.2 * grossMultiplier ** 0.75;
+export const formatSpeed = (kms: number) =>
+  kms >= 10_000 ? `${(kms / LIGHT_SPEED_KMS).toFixed(2)}c` : `${kms.toFixed(1)} km/s`;
+
+/** Cosmetic flight telemetry: speed and g-load peak at periapsis, the probe keeps most of its speed on the escape arc. */
+export function telemetry(body: BodyId, phase: TelemetryPhase, jitter = 0): Telemetry {
+  const peak = PERIAPSIS_SPEED[body];
+  const velocityKms =
+    phase === 'periapsis'
+      ? peak * (1 + jitter * 0.01)
+      : phase === 'approach'
+        ? peak * 0.35
+        : phase === 'coast'
+          ? peak * 0.75
+          : phase === 'lost'
+            ? 0
+            : PARKING_SPEED;
   const g = phase === 'periapsis' ? G_LOAD[body] * (1 + jitter * 0.04) : phase === 'approach' ? G_LOAD[body] * 0.35 : 0;
-  const altitude = phase === 'periapsis' ? PERIAPSIS_ALTITUDE[body] : phase === 'approach' ? 'closing' : phase === 'coast' ? 'escape arc' : '--';
-  return { velocity: `${velocity.toFixed(1)} km/s`, gLoad: `${g.toFixed(1)} G`, altitude };
+  const altitude =
+    phase === 'periapsis' ? PERIAPSIS_ALTITUDE[body] : phase === 'approach' ? 'closing' : phase === 'coast' ? 'escape arc' : phase === 'lost' ? 'signal lost' : '--';
+  return { velocityKms, g, velocity: formatSpeed(velocityKms), gLoad: `${g.toFixed(1)} G`, altitude };
 }

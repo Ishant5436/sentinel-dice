@@ -8,3 +8,126 @@ body {
   color: #efeaff;
   font-family: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
 }
+
+/* Holographic foil badge: tilt, rainbow sheen and glare follow the pointer (--rx/--ry/--mx/--my). */
+.holo-card {
+  --rx: 0deg;
+  --ry: 0deg;
+  --mx: 50%;
+  --my: 50%;
+  position: relative;
+  min-height: 176px;
+  border-radius: 14px;
+  overflow: hidden;
+  transform: perspective(700px) rotateX(var(--rx)) rotateY(var(--ry));
+  transition: transform 160ms ease-out, box-shadow 160ms ease-out;
+  background: linear-gradient(145deg, #2b2450, #100d1c 60%, #1d1838);
+  border: 1px solid rgba(185, 179, 218, 0.25);
+}
+.holo-earned {
+  border-color: rgba(255, 201, 138, 0.6);
+  box-shadow: 0 12px 30px -12px rgba(255, 138, 31, 0.55);
+}
+.holo-earned::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(115deg, #ff5d73 0%, #ffab4d 7%, #fdf06f 14%, #34e0a1 21%, #38bdf8 28%, #9d5cff 35%, #ff5d73 42%);
+  background-size: 320% 320%;
+  background-position: var(--mx) var(--my);
+  mix-blend-mode: color-dodge;
+  opacity: 0.32;
+}
+.holo-earned::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at var(--mx) var(--my), rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 45%);
+  mix-blend-mode: overlay;
+}
+.holo-locked {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+/* CRT phosphor: scanlines, a slow refresh band and a curved-glass vignette. */
+.crt-scanlines {
+  border-radius: 22px / 16px;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.3) 0, rgba(0, 0, 0, 0.3) 1px, transparent 1px, transparent 3px);
+  box-shadow: inset 0 0 110px rgba(0, 0, 0, 0.8), inset 0 0 0 3px rgba(8, 6, 15, 0.9);
+  animation: crt-flicker 5s infinite;
+}
+.crt-scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 0%, rgba(125, 211, 252, 0.06) 48%, rgba(125, 211, 252, 0.1) 50%, transparent 52%);
+  background-size: 100% 300%;
+  animation: crt-roll 7s linear infinite;
+}
+.crt-scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(ellipse at center, transparent 58%, rgba(0, 0, 0, 0.5) 100%);
+}
+@keyframes crt-roll {
+  from { background-position: 0 100%; }
+  to { background-position: 0 -200%; }
+}
+@keyframes crt-flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.94; }
+}
+
+/* A light sweep across primary buttons. */
+.btn-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.45) 50%, transparent 80%);
+  transform: translateX(-120%);
+  animation: shimmer 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes shimmer {
+  0%, 55% { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+
+.title-logo {
+  background: linear-gradient(180deg, #ffffff 10%, #efeaff 45%, #ffc98a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 24px rgba(255, 138, 31, 0.35)) drop-shadow(0 2px 0 rgba(157, 92, 255, 0.5));
+}
+.title-drift {
+  animation: title-drift 24s ease-in-out infinite alternate;
+}
+@keyframes title-drift {
+  from { transform: scale(1.02) translate3d(0, 0, 0); }
+  to { transform: scale(1.1) translate3d(-2%, 1%, 0); }
+}
+
+/* Route legs on the system map flow toward the next body. */
+.map-flow {
+  animation: map-flow 1.1s linear infinite;
+}
+@keyframes map-flow {
+  to { stroke-dashoffset: -22; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-strobe,
+  .btn-shimmer::after,
+  .title-drift,
+  .map-flow,
+  .crt-scanlines,
+  .crt-scanlines::before {
+    animation: none;
+  }
+}

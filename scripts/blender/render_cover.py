@@ -1,7 +1,7 @@
 """Render the 1200x630 gallery cover (og:image) for Gravity Slingshot: Grand Tour.
 
 Run headless (Blender 5.x):
-  blender -b --python scripts/blender/render_cover.py -- <out.png>
+  blender -b --python scripts/blender/render_cover.py -- <out.png> [scale-percent]
 Then scripts/blender/finish_cover.sh <out.png> adds bloom and the title into public/og-image.png.
 
 Reuses the procedural body materials from render_bodies.py.
@@ -18,6 +18,7 @@ import render_bodies as rb  # noqa: E402
 
 ARGV = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
 OUT = ARGV[0] if ARGV else "/tmp/grand-tour-cover.png"
+SCALE = int(ARGV[1]) if len(ARGV) > 1 else 100  # 200 renders the 2400x1260 title-screen backdrop
 
 
 def setup_scene():
@@ -29,7 +30,7 @@ def setup_scene():
     scene.cycles.use_denoising = True
     scene.render.resolution_x = 1200
     scene.render.resolution_y = 630
-    scene.render.resolution_percentage = 100
+    scene.render.resolution_percentage = SCALE
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGB"
     scene.view_settings.view_transform = "Standard"

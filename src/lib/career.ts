@@ -31,6 +31,15 @@ export const RANKS = [
 
 const EMPTY: Career = { tours: 0, lightYears: 0, blackHolesSurvived: 0, topMultiplier: 0, grandTours: 0, banks: 0, badges: [] };
 
+/** Probe hull unlocked at each rank, drawn by components/canvas/probe.ts (same index as RANKS). */
+export const CHASSIS = [
+  { name: 'Pioneer', desc: 'Gold-foil deep space probe' },
+  { name: 'Survey Craft', desc: 'Dual ion engines, blue exhaust' },
+  { name: 'Lancer', desc: 'Heavy hull, wide solar arrays' },
+  { name: 'Tachyon Orbiter', desc: 'Shielded stealth hull, antimatter plume' },
+] as const;
+export type ChassisId = 0 | 1 | 2 | 3;
+
 export function rankFor(lightYears: number) {
   let index = 0;
   RANKS.forEach((rank, i) => {
@@ -38,7 +47,7 @@ export function rankFor(lightYears: number) {
   });
   const next = RANKS[index + 1];
   const progress = next ? (lightYears - RANKS[index].min) / (next.min - RANKS[index].min) : 1;
-  return { rank: RANKS[index], next, progress: Math.min(1, progress) };
+  return { rank: RANKS[index], index: index as ChassisId, next, progress: Math.min(1, progress) };
 }
 
 export function loadCareer(): Career {
