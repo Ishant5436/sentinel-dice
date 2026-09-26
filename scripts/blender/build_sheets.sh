@@ -8,7 +8,7 @@ RENDER_DIR="${1:?usage: build_sheets.sh <render_dir>}"
 OUT_DIR="$(cd "$(dirname "$0")/../.." && pwd)/public/sprites"
 mkdir -p "$OUT_DIR"
 
-for body in moon jupiter pulsar; do
+for body in moon jupiter pulsar blackhole; do
   frames=("$RENDER_DIR/$body"/f*.png)
   if [ "${#frames[@]}" -ne 36 ]; then
     echo "expected 36 frames for $body, found ${#frames[@]}" >&2

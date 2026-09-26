@@ -29,7 +29,9 @@ interface Star {
 const APPROACH_MS = 1100;
 const EXIT_MS = 1200;
 const CAPTURE_MS = 950;
-const BODY_RADIUS: Record<BodyId, number> = { 0: 30, 1: 56, 2: 18 };
+const BODY_RADIUS: Record<BodyId, number> = { 0: 30, 1: 56, 2: 18, 3: 28 };
+// Closest approach: just outside each body's visible extent (the black hole's disk reaches 2.8 r).
+const PERIAPSIS: Record<BodyId, number> = { 0: 68, 1: 94, 2: 56, 3: 88 };
 const TRAIL_COLOR: Record<CanvasPhase, string> = {
   idle: '#38bdf8',
   burning: '#38bdf8',
@@ -87,6 +89,26 @@ function drawJupiter(ctx: CanvasRenderingContext2D, x: number, y: number, r: num
   ctx.restore();
 }
 
+function drawBlackHole(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  const disk = ctx.createRadialGradient(x, y, r * 1.2, x, y, r * 2.8);
+  disk.addColorStop(0, 'rgba(255, 237, 200, 0.95)');
+  disk.addColorStop(0.4, 'rgba(249, 115, 22, 0.8)');
+  disk.addColorStop(1, 'rgba(127, 29, 29, 0)');
+  ctx.fillStyle = disk;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 2.8, r * 0.7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(253, 186, 116, 0.85)';
+  ctx.lineWidth = r * 0.25;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.2, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#000000';
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawPulsar(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, t: number) {
   ctx.save();
   ctx.translate(x, y);
@@ -121,18 +143,18 @@ function drawPulsar(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
 }
 
 // Blender-rendered spin loops (scripts/blender/render_bodies.py): 36 frames in a 6x6 sheet,
-// sphere diameter = 2 / 2.2 of a frame. Procedural drawing covers the time before they load.
+// a frame spans `ortho` body radii. Procedural drawing covers the time before they load.
 interface SpinSheet {
   img: HTMLImageElement;
   ready: boolean;
   periodS: number;
+  ortho: number; // frame width in body radii (camera ortho scale in the Blender render)
 }
 const SHEET_COLS = 6;
 const SHEET_FRAMES = 36;
-const FRAME_PER_RADIUS = 2.2;
 
-function loadSheet(name: string, periodS: number): SpinSheet {
-  const sheet: SpinSheet = { img: new Image(), ready: false, periodS };
+function loadSheet(name: string, periodS: number, ortho = 2.2): SpinSheet {
+  const sheet: SpinSheet = { img: new Image(), ready: false, periodS, ortho };
   sheet.img.onload = () => {
     sheet.ready = true;
   };
@@ -145,12 +167,13 @@ const SHEETS: Record<BodyId, SpinSheet> = {
   0: loadSheet('moon', 40),
   1: loadSheet('jupiter', 14),
   2: loadSheet('pulsar', 1.5),
+  3: loadSheet('blackhole', 6, 6.2),
 };
 
 /** Draw the spin loop at time t, crossfading between neighbouring frames for smooth rotation. */
 function drawSpin(ctx: CanvasRenderingContext2D, sheet: SpinSheet, x: number, y: number, r: number, t: number) {
   const cell = sheet.img.naturalWidth / SHEET_COLS;
-  const size = r * FRAME_PER_RADIUS;
+  const size = r * sheet.ortho;
   const pos = ((t / sheet.periodS) * SHEET_FRAMES) % SHEET_FRAMES;
   const frame = Math.floor(pos);
   const blend = pos - frame;
@@ -177,7 +200,8 @@ function drawBody(ctx: CanvasRenderingContext2D, body: BodyId, x: number, y: num
   }
   if (!sheet.ready) {
     if (body === 0) drawMoon(ctx, x, y, r);
-    else drawJupiter(ctx, x, y, r, t);
+    else if (body === 1) drawJupiter(ctx, x, y, r, t);
+    else drawBlackHole(ctx, x, y, r);
     return;
   }
   if (body === 1) {
@@ -246,7 +270,7 @@ export const TourCanvas: React.FC<{ scene: CanvasScene; className?: string }> = 
       const { key, phase, body } = sceneRef.current;
       const cx = width * 0.56;
       const cy = height * 0.5;
-      const rp = BODY_RADIUS[body] + 38;
+      const rp = PERIAPSIS[body];
 
       if (key !== activeKey) {
         activeKey = key;

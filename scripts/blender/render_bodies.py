@@ -47,7 +47,7 @@ def use_gpu_if_available(scene):
         scene.cycles.device = "CPU"
 
 
-def new_scene(size):
+def new_scene(size, ortho=2.2):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
@@ -72,7 +72,7 @@ def new_scene(size):
 
     cam_data = bpy.data.cameras.new("Cam")
     cam_data.type = "ORTHO"
-    cam_data.ortho_scale = 2.2
+    cam_data.ortho_scale = ortho
     cam = bpy.data.objects.new("Cam", cam_data)
     scene.collection.objects.link(cam)
     cam.location = (0, -10, 0)
@@ -280,29 +280,144 @@ def pulsar_material():
     return mat
 
 
+def accretion_material(name, brightness, inner=1.4, outer=2.8):
+    """Hot turbulent plasma: white-gold inner edge fading to deep red, with Doppler beaming.
+
+    Emission fades to transparent at the edges. The beaming gradient uses camera-space X,
+    so the approaching (left) side stays brighter while the disk spins.
+    """
+    mat, tree, out = new_material(name)
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    radius = tree.nodes.new("ShaderNodeVectorMath")
+    radius.operation = "LENGTH"
+    tree.links.new(coord.outputs["Object"], radius.inputs[0])
+    radial = tree.nodes.new("ShaderNodeMapRange")
+    radial.inputs["From Min"].default_value = inner
+    radial.inputs["From Max"].default_value = outer
+    radial.inputs["To Min"].default_value = 1.0
+    radial.inputs["To Max"].default_value = 0.0
+    tree.links.new(sock(radius, "Value", out=True), radial.inputs["Value"])
+
+    swirl = tree.nodes.new("ShaderNodeTexWave")
+    swirl.wave_type = "RINGS"
+    swirl.inputs["Scale"].default_value = 2.6
+    swirl.inputs["Distortion"].default_value = 7.0
+    swirl.inputs["Detail"].default_value = 6.0
+    tree.links.new(coord.outputs["Object"], swirl.inputs["Vector"])
+    streaks = tree.nodes.new("ShaderNodeMapRange")
+    streaks.inputs["To Min"].default_value = 0.45
+    streaks.inputs["To Max"].default_value = 1.0
+    tree.links.new(sock(swirl, "Factor", out=True), streaks.inputs["Value"])
+
+    axes = tree.nodes.new("ShaderNodeSeparateXYZ")
+    tree.links.new(coord.outputs["Camera"], axes.inputs[0])
+    doppler = tree.nodes.new("ShaderNodeMapRange")
+    doppler.inputs["From Min"].default_value = -3.0
+    doppler.inputs["From Max"].default_value = 3.0
+    doppler.inputs["To Min"].default_value = 1.8
+    doppler.inputs["To Max"].default_value = 0.5
+    tree.links.new(axes.outputs["X"], doppler.inputs["Value"])
+
+    intensity = tree.nodes.new("ShaderNodeMath")
+    intensity.operation = "MULTIPLY"
+    tree.links.new(radial.outputs["Result"], intensity.inputs[0])
+    tree.links.new(streaks.outputs["Result"], intensity.inputs[1])
+    strength = tree.nodes.new("ShaderNodeMath")
+    strength.operation = "MULTIPLY"
+    tree.links.new(intensity.outputs[0], strength.inputs[0])
+    tree.links.new(doppler.outputs["Result"], strength.inputs[1])
+    scaled = tree.nodes.new("ShaderNodeMath")
+    scaled.operation = "MULTIPLY"
+    scaled.inputs[1].default_value = brightness
+    tree.links.new(strength.outputs[0], scaled.inputs[0])
+
+    heat = ramp(tree, [(0.0, "#5c1208"), (0.35, "#e2541b"), (0.7, "#ffb05a"), (1.0, "#fffbe8")])
+    tree.links.new(radial.outputs["Result"], heat.inputs["Factor"])
+    emission = tree.nodes.new("ShaderNodeEmission")
+    tree.links.new(heat.outputs["Color"], emission.inputs["Color"])
+    tree.links.new(scaled.outputs[0], emission.inputs["Strength"])
+
+    coverage = tree.nodes.new("ShaderNodeMath")
+    coverage.operation = "MULTIPLY"
+    coverage.use_clamp = True
+    coverage.inputs[1].default_value = 1.6
+    tree.links.new(intensity.outputs[0], coverage.inputs[0])
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    tree.links.new(coverage.outputs[0], mix.inputs[0])
+    tree.links.new(transparent.outputs[0], mix.inputs[1])
+    tree.links.new(emission.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def black_material():
+    mat, tree, out = new_material("Horizon")
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = (0, 0, 0, 1)
+    tree.links.new(emission.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def add_ring(major, minor, flatten_axis, material, tilt_deg=0.0):
+    bpy.ops.mesh.primitive_torus_add(major_segments=192, minor_segments=24, major_radius=major, minor_radius=minor)
+    ring = bpy.context.active_object
+    bpy.ops.object.shade_smooth()
+    ring.scale = (1, 1, 0.03) if flatten_axis == "Z" else (1, 1, 0.03)
+    if flatten_axis == "Y":
+        ring.rotation_euler = (math.radians(90), 0, 0)
+    else:
+        ring.rotation_euler = (math.radians(tilt_deg), 0, 0)
+    ring.data.materials.append(material)
+    return ring
+
+
+def build_blackhole(scene):
+    """Event horizon, tilted accretion disk, lensed halo over the top, and a photon ring.
+    Returns the objects to spin each frame and the local axis each spins about."""
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=96, ring_count=48, radius=1.0)
+    horizon = bpy.context.active_object
+    horizon.data.materials.append(black_material())
+    disk = add_ring(2.1, 0.7, "Z", accretion_material("Disk", 5.0), tilt_deg=16)
+    halo = add_ring(1.2, 0.18, "Y", accretion_material("Halo", 2.4, inner=1.02, outer=1.42))
+    add_ring(1.03, 0.025, "Y", accretion_material("Photon", 5.0, inner=1.0, outer=1.1))
+    return [disk, halo]
+
+
+BLACKHOLE_ORTHO = 6.2  # frame spans 6.2 horizon radii (the disk reaches 2.8)
+
 BODIES = {
     "moon": {"size": 192, "tilt": 6, "material": moon_material, "lit": True},
     "jupiter": {"size": 256, "tilt": 10, "material": jupiter_material, "lit": True},
     "pulsar": {"size": 128, "tilt": 30, "material": pulsar_material, "lit": False},
+    "blackhole": {"size": 320, "ortho": BLACKHOLE_ORTHO, "build": build_blackhole, "lit": False},
 }
 
 
 def render_body(name, spec):
-    scene, target = new_scene(spec["size"])
+    scene, target = new_scene(spec["size"], spec.get("ortho", 2.2))
     if spec["lit"]:
         add_sun(scene, target, (-2.5, -6, 2.5), 5.0)
         add_sun(scene, target, (5, 6, 1.5), 2.0, (0.55, 0.75, 1.0))
-    sphere = add_sphere(scene, spec["tilt"])
-    sphere.data.materials.append(spec["material"]())
+    if "build" in spec:
+        spinners = spec["build"](scene)
+    else:
+        sphere = add_sphere(scene, spec["tilt"])
+        sphere.data.materials.append(spec["material"]())
+        spinners = [sphere]
+    base = [tuple(obj.rotation_euler) for obj in spinners]
     folder = os.path.join(OUT, name)
     os.makedirs(folder, exist_ok=True)
     for frame in range(FRAMES):
-        sphere.rotation_euler = (0, 0, 2 * math.pi * frame / FRAMES)
+        angle = 2 * math.pi * frame / FRAMES
+        for obj, (rx, ry, _) in zip(spinners, base):
+            obj.rotation_euler = (rx, ry, angle)
         scene.render.filepath = os.path.join(folder, f"f{frame:02d}.png")
         bpy.ops.render.render(write_still=True)
     print(f"rendered {FRAMES} frames of {name} into {folder}")
 
 
-for body_name, body_spec in BODIES.items():
-    if not ONLY or body_name in ONLY:
-        render_body(body_name, body_spec)
+if __name__ == "__main__":
+    for body_name, body_spec in BODIES.items():
+        if not ONLY or body_name in ONLY:
+            render_body(body_name, body_spec)
