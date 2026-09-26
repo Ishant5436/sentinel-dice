@@ -3,11 +3,11 @@ import { decodeAbiParameters, encodeAbiParameters, parseAbiParameters, type Hex 
 // Grand Tour paytable and state machine, mirroring contracts/GravitySlingshot.sol exactly.
 // The standalone demo, the host integration and scripts/monte-carlo.ts all use this module.
 
-export type BodyId = 0 | 1 | 2;
+export type BodyId = 0 | 1 | 2 | 3;
 
 export interface Body {
   id: BodyId;
-  key: 'moon' | 'jupiter' | 'pulsar';
+  key: 'moon' | 'jupiter' | 'pulsar' | 'blackhole';
   name: string;
   surviveBps: number;
   multNum: bigint;
@@ -20,6 +20,7 @@ export const BODIES: readonly Body[] = [
   { id: 0, key: 'moon', name: 'Moon', surviveBps: 8000, multNum: 5n, multDen: 4n, multLabel: '1.25x', blurb: 'Gentle assist' },
   { id: 1, key: 'jupiter', name: 'Jupiter', surviveBps: 5000, multNum: 2n, multDen: 1n, multLabel: '2x', blurb: 'Gas giant' },
   { id: 2, key: 'pulsar', name: 'Pulsar', surviveBps: 2500, multNum: 4n, multDen: 1n, multLabel: '4x', blurb: 'Neutron star' },
+  { id: 3, key: 'blackhole', name: 'Black hole', surviveBps: 1250, multNum: 8n, multDen: 1n, multLabel: '8x', blurb: 'Event horizon' },
 ];
 
 export const MAX_LEGS = 4;
@@ -114,12 +115,13 @@ export function tourPayout(wager: bigint, route: readonly number[]): bigint {
 }
 
 export function topRoute(firstBody: BodyId): BodyId[] {
-  if (firstBody === 0) return [0, 2, 1, 2];
-  if (firstBody === 1) return [1, 2, 1, 2];
-  return [2, 1, 2, 1];
+  if (firstBody === 0) return [0, 3, 2, 3];
+  if (firstBody === 1) return [1, 3, 2, 3];
+  if (firstBody === 2) return [2, 3, 2, 3];
+  return [3, 2, 3, 2];
 }
 
-/** Worst-case payout multiplier for a tour opened on `firstBody` (39.2x or 62.72x). */
+/** Worst-case payout multiplier for a tour opened on `firstBody` (313.6x up to 1003.52x). */
 export function maxPayoutMultiplier(firstBody: BodyId): number {
   return (routeMultiplier(topRoute(firstBody)) * Number(RTP_BPS)) / Number(BASIS_POINTS);
 }

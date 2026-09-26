@@ -31,10 +31,12 @@ const STRATEGIES: Array<{ name: string; first: () => BodyId; policy: Policy }> =
   { name: 'Pulsar once, eject', first: () => 2, policy: fixedRoute([2]) },
   { name: 'Moon x4 zigzag (M J M J)', first: () => 0, policy: fixedRoute([0, 1, 0, 1]) },
   { name: 'Jupiter then Pulsar, eject', first: () => 1, policy: fixedRoute([1, 2]) },
-  { name: 'Grand Tour max (P J P J)', first: () => 2, policy: fixedRoute([2, 1, 2, 1]) },
+  { name: 'Pulsar-Jupiter loop (P J P J)', first: () => 2, policy: fixedRoute([2, 1, 2, 1]) },
+  { name: 'Black hole once, eject', first: () => 3, policy: fixedRoute([3]) },
+  { name: 'Grand Tour max (P B P B)', first: () => 2, policy: fixedRoute([2, 3, 2, 3]) },
   {
     name: 'Chaos pilot (random bodies, 30% eject)',
-    first: () => randomBody([0, 1, 2]),
+    first: () => randomBody([0, 1, 2, 3]),
     policy: tour => (rollUniformBps() < 3000 ? 'eject' : randomBody(legalNextBodies(tour))),
   },
 ];

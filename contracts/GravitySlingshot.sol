@@ -16,16 +16,17 @@ import {
  *         fresh VRF randomness. After each surviving assist the player either EJECTS and
  *         banks the tour value, or burns onward to the next body.
  *
- *           body      survive   leg multiplier
- *           Moon        80%        1.25x
- *           Jupiter     50%        2x
- *           Pulsar      25%        4x
+ *           body         survive   leg multiplier
+ *           Moon           80%        1.25x
+ *           Jupiter        50%        2x
+ *           Pulsar         25%        4x
+ *           Black hole     12.5%      8x
  *
  *         survive * multiplier = 1 on every leg, so each leg is a fair bet and the tour
  *         value is a martingale. The 2% house edge is applied once, at settlement:
  *           payout = wager * product(leg multipliers) * 0.98
  *         Expected payout is therefore exactly 98% of the wager under ANY route or
- *         stopping rule. The top route (Pulsar, Jupiter, Pulsar, Jupiter) pays 62.72x.
+ *         stopping rule. The top route (Pulsar, Black hole, Pulsar, Black hole) pays 1003.52x.
  * @dev A strategy can only condition on "survived so far", so every strategy is a fixed
  *      route plus an eject point. Tests enumerate all of them through these handlers.
  */
@@ -37,12 +38,13 @@ contract GravitySlingshot is ICasinoGameV2 {
   uint256 public constant TOUR_STATE_BYTES = 352; // 11 ABI words, see _encodeTour
 
   uint8 public constant MAX_LEGS = 4;
-  uint8 public constant BODY_COUNT = 3;
+  uint8 public constant BODY_COUNT = 4;
   uint8 public constant NO_BODY = 255;
 
   uint8 public constant MOON = 0;
   uint8 public constant JUPITER = 1;
   uint8 public constant PULSAR = 2;
+  uint8 public constant BLACK_HOLE = 3;
 
   uint8 public constant ACTION_LAUNCH = 1;
   uint8 public constant ACTION_EJECT = 2;
@@ -81,6 +83,7 @@ contract GravitySlingshot is ICasinoGameV2 {
     if (body == MOON) return 8_000;
     if (body == JUPITER) return 5_000;
     if (body == PULSAR) return 2_500;
+    if (body == BLACK_HOLE) return 1_250;
     revert GravitySlingshot__InvalidBody(body);
   }
 
@@ -89,6 +92,7 @@ contract GravitySlingshot is ICasinoGameV2 {
     if (body == MOON) return (5, 4);
     if (body == JUPITER) return (2, 1);
     if (body == PULSAR) return (4, 1);
+    if (body == BLACK_HOLE) return (8, 1);
     revert GravitySlingshot__InvalidBody(body);
   }
 
@@ -122,9 +126,18 @@ contract GravitySlingshot is ICasinoGameV2 {
 
   /// @notice Highest-paying legal route for a given first body (verified by enumeration in tests).
   function topRoute(uint8 firstBody) public pure returns (uint8[4] memory route) {
-    if (firstBody == MOON) return [MOON, PULSAR, JUPITER, PULSAR]; // 40x
-    if (firstBody == JUPITER) return [JUPITER, PULSAR, JUPITER, PULSAR]; // 64x
-    if (firstBody == PULSAR) return [PULSAR, JUPITER, PULSAR, JUPITER]; // 64x
+    if (firstBody == MOON) return [MOON, BLACK_HOLE, PULSAR, BLACK_HOLE]; // 320x
+    if (firstBody == JUPITER) return [JUPITER, BLACK_HOLE, PULSAR, BLACK_HOLE]; // 512x
+    if (firstBody == PULSAR) return [PULSAR, BLACK_HOLE, PULSAR, BLACK_HOLE]; // 1024x
+    if (firstBody == BLACK_HOLE) return [BLACK_HOLE, PULSAR, BLACK_HOLE, PULSAR]; // 1024x
+    revert GravitySlingshot__InvalidBody(firstBody);
+  }
+
+  /// @notice Largest route multiplier (= E[M^2]) among routes that never pay the top tier.
+  function nonTopSecondMoment(uint8 firstBody) public pure returns (uint256) {
+    if (firstBody == MOON) return 160;
+    if (firstBody == JUPITER) return 256;
+    if (firstBody == PULSAR || firstBody == BLACK_HOLE) return 512;
     revert GravitySlingshot__InvalidBody(firstBody);
   }
 
@@ -178,8 +191,8 @@ contract GravitySlingshot is ICasinoGameV2 {
    *  - maxPayout / probabilityWad: the top route. Legs are fair, so P(top) = 1 / multiplier.
    *  - bodyVarianceScaled: variance per unit wager is 0.98^2 * (E[M^2] - 1), and for a
    *    fixed route E[M^2] = product of its leg multipliers. The largest product among
-   *    routes that never pay the top tier is 40 (Jupiter or Pulsar first) or 25 (Moon
-   *    first). The binary top-tier term alone already bounds the total variance.
+   *    routes that never pay the top tier is nonTopSecondMoment(firstBody). The binary
+   *    top-tier term alone already bounds the total variance.
    */
   function quoteRiskParams(
     uint256 wager,
@@ -200,7 +213,7 @@ contract GravitySlingshot is ICasinoGameV2 {
     (uint256 num, uint256 den) = routeMultiplier(topRoute(firstBody), MAX_LEGS);
     probabilityWad = (den * WAD + num - 1) / num; // ceil(1 / multiplier)
     expectedPayout = (wager * RTP_BPS) / BASIS_POINTS;
-    uint256 secondMoment = firstBody == MOON ? 25 : 40;
+    uint256 secondMoment = nonTopSecondMoment(firstBody);
     uint256 bodyVarianceWad = (RTP_BPS * RTP_BPS * (secondMoment - 1) * WAD) /
       (BASIS_POINTS * BASIS_POINTS);
     bodyVarianceScaled = wager * wager * bodyVarianceWad;

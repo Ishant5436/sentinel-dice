@@ -9,6 +9,7 @@ describe("Grand Tour through the SDK LocalCasinoHost", () => {
   const MOON = 0;
   const JUPITER = 1;
   const PULSAR = 2;
+  const BLACK_HOLE = 3;
   const LAUNCH = 1;
   const EJECT = 2;
   const Phase = { SETTLED: 3, FORFEITED: 4 };
@@ -45,7 +46,7 @@ describe("Grand Tour through the SDK LocalCasinoHost", () => {
     vault = await host.read.vault();
 
     await host.write.registerGame([game.address, "GravitySlingshot"]);
-    await token.write.mint([vault, 1_000n * WAGER]);
+    await token.write.mint([vault, 10_000n * WAGER]);
     await token.write.mint([player, 100n * WAGER]);
     await token.write.approve([host.address, 2n ** 255n]);
   });
@@ -91,18 +92,18 @@ describe("Grand Tour through the SDK LocalCasinoHost", () => {
     expect(after.player).to.equal(before.player + (WAGER * 292n) / 100n);
   });
 
-  it("the full grand tour pays 62.72x, exactly the reserve the host committed", async () => {
+  it("the full grand tour pays 1003.52x, exactly the reserve the host committed", async () => {
     const before = await balances();
     let step = await open(PULSAR);
-    for (const next of [JUPITER, PULSAR, JUPITER]) {
+    for (const next of [BLACK_HOLE, PULSAR, BLACK_HOLE]) {
       const survived = await vrf(step.advanced, 0);
       step = await act(survived.advanced.session, LAUNCH, next);
     }
     const done = await vrf(step.advanced, 0);
     expect(done.settled.phase).to.equal(Phase.SETTLED);
-    expect(done.settled.payout).to.equal((WAGER * 6272n) / 100n);
+    expect(done.settled.payout).to.equal((WAGER * 100352n) / 100n);
     const after = await balances();
-    expect(after.player).to.equal(before.player + (WAGER * 6172n) / 100n);
+    expect(after.player).to.equal(before.player + (WAGER * 100252n) / 100n);
   });
 
   it("the host rejects a repeat body and keeps the session live", async () => {

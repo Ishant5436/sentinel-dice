@@ -11,12 +11,14 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   const MOON = 0;
   const JUPITER = 1;
   const PULSAR = 2;
-  const BODIES = [MOON, JUPITER, PULSAR];
-  const SURVIVE_BPS = [8000n, 5000n, 2500n];
+  const BLACK_HOLE = 3;
+  const BODIES = [MOON, JUPITER, PULSAR, BLACK_HOLE];
+  const SURVIVE_BPS = [8000n, 5000n, 2500n, 1250n];
   const MULT = [
     [5n, 4n],
     [2n, 1n],
     [4n, 1n],
+    [8n, 1n],
   ];
   const LAUNCH = 1;
   const EJECT = 2;
@@ -123,11 +125,12 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   }
 
   describe("paytable and quotes", () => {
-    it("reserves exactly the top route: 40x from the Moon, 64x from Jupiter or a Pulsar", async () => {
+    it("reserves exactly the top route reachable from each first body", async () => {
       const cases = [
-        { body: MOON, payout: 39_200_000_000_000_000_000n },
-        { body: JUPITER, payout: 62_720_000_000_000_000_000n },
-        { body: PULSAR, payout: 62_720_000_000_000_000_000n },
+        { body: MOON, payout: 313_600_000_000_000_000_000n }, // 320x * 0.98
+        { body: JUPITER, payout: 501_760_000_000_000_000_000n }, // 512x * 0.98
+        { body: PULSAR, payout: 1_003_520_000_000_000_000_000n }, // 1024x * 0.98
+        { body: BLACK_HOLE, payout: 1_003_520_000_000_000_000_000n },
       ];
       for (const { body, payout } of cases) {
         const [escrow, reserve] = await game.read.quoteCaps([WAGER, gameData(body)]);
@@ -138,9 +141,10 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
 
     it("quotes risk params: top-tier probability, 98% mean, strategy-bounded body variance", async () => {
       const cases = [
-        { body: MOON, prob: 25_000_000_000_000_000n, secondMoment: 25n },
-        { body: JUPITER, prob: 15_625_000_000_000_000n, secondMoment: 40n },
-        { body: PULSAR, prob: 15_625_000_000_000_000n, secondMoment: 40n },
+        { body: MOON, prob: 3_125_000_000_000_000n, secondMoment: 160n }, // 1/320
+        { body: JUPITER, prob: 1_953_125_000_000_000n, secondMoment: 256n }, // 1/512
+        { body: PULSAR, prob: 976_562_500_000_000n, secondMoment: 512n }, // 1/1024
+        { body: BLACK_HOLE, prob: 976_562_500_000_000n, secondMoment: 512n },
       ];
       for (const { body, prob, secondMoment } of cases) {
         const [maxPayout, probabilityWad, expected, bodyVar] = await game.read.quoteRiskParams([
@@ -157,7 +161,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
     });
 
     it("rejects malformed gameData and unknown bodies", async () => {
-      await expectRevert(game.read.quoteCaps([WAGER, gameData(3)]), "GravitySlingshot__InvalidBody");
+      await expectRevert(game.read.quoteCaps([WAGER, gameData(4)]), "GravitySlingshot__InvalidBody");
       await expectRevert(game.read.quoteCaps([WAGER, "0x01"]), "GravitySlingshot__InvalidGameData");
       await expectRevert(game.read.quoteCaps([0n, gameData(MOON)]), "GravitySlingshot__InvalidWager");
     });
@@ -217,7 +221,7 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
         "GravitySlingshot__RepeatBody"
       );
       await expectRevert(
-        game.read.onPlayerAction([ctxFor(JUPITER, cruising), action(LAUNCH, 3)]),
+        game.read.onPlayerAction([ctxFor(JUPITER, cruising), action(LAUNCH, 4)]),
         "GravitySlingshot__InvalidBody"
       );
       await expectRevert(
@@ -238,10 +242,10 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
     });
 
     it("auto-settles after the fourth assist and pays exactly the committed cap", async () => {
-      const route = [PULSAR, JUPITER, PULSAR, JUPITER];
+      const route = [PULSAR, BLACK_HOLE, PULSAR, BLACK_HOLE];
       const { settle, reserve } = await flyAndBank(route);
       expect(settle.nextPhase).to.equal(Phase.SETTLED);
-      expect(settle.payout).to.equal(WAGER + reserve); // 62.72x, no slack and no overflow
+      expect(settle.payout).to.equal(WAGER + reserve); // 1003.52x, no slack and no overflow
       expect(decodeTour(settle.newGameState).status).to.equal(Status.COMPLETE);
     });
   });
@@ -249,8 +253,8 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
   describe("exhaustive strategy check (every route x every eject point)", () => {
     const routes = allRoutes();
 
-    it("enumerates all 45 legal strategies", () => {
-      expect(routes.length).to.equal(3 + 6 + 12 + 24);
+    it("enumerates all 160 legal strategies", () => {
+      expect(routes.length).to.equal(4 + 12 + 36 + 108);
     });
 
     it("pays exactly 98.00% expected return for every strategy, within the reserve", async () => {
@@ -278,7 +282,8 @@ describe("GravitySlingshot: Grand Tour (ICasinoGameV2)", () => {
         const best = Math.max(...fromFirst.map(product));
         expect(product(top)).to.equal(best);
         const nonTop = fromFirst.filter(r => r.join() !== top.join()).map(product);
-        expect(Math.max(...nonTop)).to.equal(first === MOON ? 25 : 40);
+        expect(Math.max(...nonTop)).to.equal(Number(await game.read.nonTopSecondMoment([first])));
+        expect(Math.max(...nonTop)).to.equal([160, 256, 512, 512][first]);
       }
     });
   });
