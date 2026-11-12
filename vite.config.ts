@@ -7,8 +7,8 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@chain/casino-sdk/guest': path.resolve('/tmp/casino-sdk/casino-sdk/src/guest.ts'),
-      '@chain/casino-sdk': path.resolve('/tmp/casino-sdk/casino-sdk/src/index.ts'),
+      '@chain/casino-sdk/guest': path.resolve(__dirname, './src/casino-sdk/guest.ts'),
+      '@chain/casino-sdk': path.resolve(__dirname, './src/casino-sdk/index.ts'),
       'penpal': path.resolve(__dirname, './node_modules/penpal'),
     },
   },

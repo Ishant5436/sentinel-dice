@@ -17,8 +17,12 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "penpal": ["node_modules/penpal"]
+      "penpal": ["node_modules/penpal"],
+      "@chain/casino-sdk/guest": ["src/casino-sdk/guest.ts"],
+      "@chain/casino-sdk": ["src/casino-sdk/index.ts"],
+      "@chain/casino-sdk/*": ["src/casino-sdk/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "node_modules"]
 }
